@@ -1,0 +1,16 @@
+{
+  "version": "1.1.0",
+  "buildNumber": 2,
+  "bundles": [
+    {
+      "name": "cubes.unity3d",
+      "hash": "268b5585591102f9337fd16143cea825",
+      "size": 33181
+    },
+    {
+      "name": "test_bundle.unity3d",
+      "hash": "ac2dc80849cfd3b4a88740ebf76b3264",
+      "size": 20
+    }
+  ]
+}

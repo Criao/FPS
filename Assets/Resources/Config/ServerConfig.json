@@ -1,0 +1,5 @@
+{
+    "serverUrl": "http://localhost:3000",
+    "cdnUrl": "https://cdn.example.com",
+    "timeout": 30
+}
