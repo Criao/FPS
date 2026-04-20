@@ -4,8 +4,16 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 
+/// <summary>
+/// AssetBundle 构建工具
+/// 用于在编辑器中构建、重命名和生成资源清单
+/// </summary>
 public class AssetBundleBuilder : EditorWindow
 {
+    /// <summary>
+    /// 构建所有 AssetBundles
+    /// 菜单路径: Tools/Build AssetBundles
+    /// </summary>
     [MenuItem("Tools/Build AssetBundles")]
     static void BuildAllAssetBundles()
     {
@@ -16,18 +24,25 @@ public class AssetBundleBuilder : EditorWindow
             Directory.CreateDirectory(outputPath);
         }
 
+        // 构建 AssetBundles
         BuildPipeline.BuildAssetBundles(
             outputPath,
             BuildAssetBundleOptions.None,
             BuildTarget.StandaloneWindows64
         );
 
+        // 重命名文件（添加 .unity3d 扩展名）
         RenameAssetBundles(outputPath);
+
+        // 生成资源清单文件
         GenerateManifest(outputPath);
 
         Debug.Log($"AssetBundles built to: {outputPath}");
     }
 
+    /// <summary>
+    /// 重命名 AssetBundle 文件，添加 .unity3d 扩展名
+    /// </summary>
     static void RenameAssetBundles(string bundlePath)
     {
         DirectoryInfo dir = new DirectoryInfo(bundlePath);
@@ -48,6 +63,10 @@ public class AssetBundleBuilder : EditorWindow
         }
     }
 
+    /// <summary>
+    /// 生成资源清单 JSON 文件
+    /// 包含版本号、构建号和所有 bundle 的信息（名称、哈希、大小）
+    /// </summary>
     static void GenerateManifest(string bundlePath)
     {
         StringBuilder manifestJson = new StringBuilder();
@@ -85,6 +104,9 @@ public class AssetBundleBuilder : EditorWindow
         Debug.Log($"Manifest generated: {manifestPath}");
     }
 
+    /// <summary>
+    /// 计算文件的 MD5 哈希值
+    /// </summary>
     static string CalculateMD5(string filePath)
     {
         using (var md5 = MD5.Create())
