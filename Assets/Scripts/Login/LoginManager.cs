@@ -50,32 +50,53 @@ namespace FPSGame.Login
         /// </summary>
         public IEnumerator TryAutoLogin(Action<bool> callback)
         {
-            if (TokenManager.Instance.HasToken())
+            if (!TokenManager.Instance.HasRememberedToken())
             {
-                string token = TokenManager.Instance.GetToken();
-                string userId = TokenManager.Instance.GetUserId();
-                string username = TokenManager.Instance.GetUsername();
-                bool isGuest = TokenManager.Instance.IsGuest();
-
-                // TODO: 验证Token是否有效（调用服务器验证接口）
-                // 这里简化处理，直接使用保存的信息
-                CurrentUser = new UserData
+                if (TokenManager.Instance.HasToken())
                 {
-                    userId = userId,
-                    username = username,
-                    token = token,
-                    isGuest = isGuest
-                };
+                    TokenManager.Instance.ClearToken();
+                }
 
-                Utils.Logger.Log($"自动登录成功: {username}");
-                callback?.Invoke(true);
-            }
-            else
-            {
                 callback?.Invoke(false);
+                yield break;
             }
 
-            yield return null;
+            string token = TokenManager.Instance.GetToken();
+            if (string.IsNullOrEmpty(token))
+            {
+                TokenManager.Instance.ClearToken();
+                callback?.Invoke(false);
+                yield break;
+            }
+
+            bool requestComplete = false;
+            bool requestSuccess = false;
+
+            yield return AuthService.Instance.VerifyToken(token, (success, message, userData) =>
+            {
+                requestComplete = true;
+                requestSuccess = success;
+
+                if (success)
+                {
+                    CurrentUser = userData;
+                    TokenManager.Instance.SaveToken(
+                        userData.token,
+                        userData.userId,
+                        userData.username,
+                        userData.isGuest,
+                        !userData.isGuest);
+                    Utils.Logger.Log($"自动登录成功: {userData.username}");
+                }
+                else
+                {
+                    TokenManager.Instance.ClearToken();
+                    Utils.Logger.Log($"自动登录失败: {message}");
+                }
+            });
+
+            yield return new WaitUntil(() => requestComplete);
+            callback?.Invoke(requestSuccess);
         }
 
         /// <summary>
@@ -95,7 +116,7 @@ namespace FPSGame.Login
                 if (success)
                 {
                     CurrentUser = userData;
-                    TokenManager.Instance.SaveToken(userData.token, userData.userId, userData.username, userData.isGuest);
+                    TokenManager.Instance.SaveToken(userData.token, userData.userId, userData.username, userData.isGuest, false);
                     Utils.Logger.Log($"游客登录成功: {userData.username}");
                 }
                 callback?.Invoke(success, message);
@@ -119,16 +140,16 @@ namespace FPSGame.Login
                 if (success)
                 {
                     CurrentUser = userData;
-                    TokenManager.Instance.SaveToken(userData.token, userData.userId, userData.username, userData.isGuest);
 
                     if (rememberMe)
                     {
-                        TokenManager.Instance.SaveRememberedPassword(username, password);
+                        TokenManager.Instance.SaveToken(userData.token, userData.userId, userData.username, userData.isGuest, true);
                         Utils.Logger.Log("已保存登录信息");
                     }
                     else
                     {
-                        TokenManager.Instance.ClearRememberedPassword();
+                        TokenManager.Instance.ClearToken();
+                        TokenManager.Instance.ClearRememberedLogin();
                     }
 
                     Utils.Logger.Log($"账号登录成功: {userData.username}");
@@ -178,13 +199,49 @@ namespace FPSGame.Login
         }
 
         /// <summary>
+        /// 重置密码
+        /// </summary>
+        public void ResetPassword(string email, string resetCode, string newPassword, Action<bool, string> callback)
+        {
+            StartCoroutine(ResetPasswordCoroutine(email, resetCode, newPassword, callback));
+        }
+
+        private IEnumerator ResetPasswordCoroutine(string email, string resetCode, string newPassword, Action<bool, string> callback)
+        {
+            Utils.Logger.Log($"重置密码: {email}");
+
+            yield return AuthService.Instance.ResetPassword(email, resetCode, newPassword, (success, message) =>
+            {
+                if (success)
+                {
+                    TokenManager.Instance.ClearToken();
+                }
+
+                callback?.Invoke(success, message);
+            });
+        }
+
+        /// <summary>
         /// 登出
         /// </summary>
         public void Logout()
         {
+            string token = TokenManager.Instance.GetToken();
+
             CurrentUser = null;
             TokenManager.Instance.ClearToken();
             Utils.Logger.Log("已登出");
+
+            if (!string.IsNullOrEmpty(token))
+            {
+                StartCoroutine(AuthService.Instance.Logout(token, (success, message) =>
+                {
+                    if (!success)
+                    {
+                        Utils.Logger.LogWarning($"Server logout failed: {message}");
+                    }
+                }));
+            }
         }
 
         /// <summary>

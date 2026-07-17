@@ -23,17 +23,23 @@ namespace FPSGame.Login
         private const string USER_ID_KEY = "user_id";
         private const string USERNAME_KEY = "username";
         private const string IS_GUEST_KEY = "is_guest";
+        private const string REMEMBER_ME_KEY = "remember_me";
+        private const string LEGACY_SAVED_USERNAME_KEY = "saved_username";
+        private const string LEGACY_SAVED_PASSWORD_KEY = "saved_password";
 
         /// <summary>
         /// 保存Token
         /// </summary>
-        public void SaveToken(string token, string userId, string username, bool isGuest)
+        public void SaveToken(string token, string userId, string username, bool isGuest, bool rememberMe = true)
         {
             string encryptedToken = Crypto.AESEncrypt(token);
             PlayerPrefs.SetString(TOKEN_KEY, encryptedToken);
             PlayerPrefs.SetString(USER_ID_KEY, userId);
             PlayerPrefs.SetString(USERNAME_KEY, username);
             PlayerPrefs.SetInt(IS_GUEST_KEY, isGuest ? 1 : 0);
+            PlayerPrefs.SetInt(REMEMBER_ME_KEY, rememberMe ? 1 : 0);
+            PlayerPrefs.DeleteKey(LEGACY_SAVED_USERNAME_KEY);
+            PlayerPrefs.DeleteKey(LEGACY_SAVED_PASSWORD_KEY);
             PlayerPrefs.Save();
 
             Utils.Logger.Log("Token已保存");
@@ -84,6 +90,14 @@ namespace FPSGame.Login
         }
 
         /// <summary>
+        /// 是否存在允许自动登录的Token
+        /// </summary>
+        public bool HasRememberedToken()
+        {
+            return HasToken() && PlayerPrefs.GetInt(REMEMBER_ME_KEY, 0) == 1;
+        }
+
+        /// <summary>
         /// 清除Token（登出）
         /// </summary>
         public void ClearToken()
@@ -92,21 +106,12 @@ namespace FPSGame.Login
             PlayerPrefs.DeleteKey(USER_ID_KEY);
             PlayerPrefs.DeleteKey(USERNAME_KEY);
             PlayerPrefs.DeleteKey(IS_GUEST_KEY);
+            PlayerPrefs.DeleteKey(REMEMBER_ME_KEY);
+            PlayerPrefs.DeleteKey(LEGACY_SAVED_USERNAME_KEY);
+            PlayerPrefs.DeleteKey(LEGACY_SAVED_PASSWORD_KEY);
             PlayerPrefs.Save();
 
             Utils.Logger.Log("Token已清除");
-        }
-
-        /// <summary>
-        /// 保存记住的密码
-        /// </summary>
-        public void SaveRememberedPassword(string username, string password)
-        {
-            string encryptedPassword = Crypto.AESEncrypt(password);
-            PlayerPrefs.SetString("saved_username", username);
-            PlayerPrefs.SetString("saved_password", encryptedPassword);
-            PlayerPrefs.SetInt("remember_me", 1);
-            PlayerPrefs.Save();
         }
 
         /// <summary>
@@ -114,32 +119,19 @@ namespace FPSGame.Login
         /// </summary>
         public string GetRememberedUsername()
         {
-            if (PlayerPrefs.GetInt("remember_me", 0) == 1)
-                return PlayerPrefs.GetString("saved_username", string.Empty);
+            if (PlayerPrefs.GetInt(REMEMBER_ME_KEY, 0) == 1)
+                return PlayerPrefs.GetString(USERNAME_KEY, string.Empty);
             return string.Empty;
         }
 
         /// <summary>
-        /// 获取记住的密码
+        /// 清除记住的登录信息
         /// </summary>
-        public string GetRememberedPassword()
+        public void ClearRememberedLogin()
         {
-            if (PlayerPrefs.GetInt("remember_me", 0) == 1)
-            {
-                string encryptedPassword = PlayerPrefs.GetString("saved_password", string.Empty);
-                return Crypto.AESDecrypt(encryptedPassword);
-            }
-            return string.Empty;
-        }
-
-        /// <summary>
-        /// 清除记住的密码
-        /// </summary>
-        public void ClearRememberedPassword()
-        {
-            PlayerPrefs.DeleteKey("saved_username");
-            PlayerPrefs.DeleteKey("saved_password");
-            PlayerPrefs.DeleteKey("remember_me");
+            PlayerPrefs.DeleteKey(REMEMBER_ME_KEY);
+            PlayerPrefs.DeleteKey(LEGACY_SAVED_USERNAME_KEY);
+            PlayerPrefs.DeleteKey(LEGACY_SAVED_PASSWORD_KEY);
             PlayerPrefs.Save();
         }
     }

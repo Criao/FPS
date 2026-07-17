@@ -1,13 +1,12 @@
-using System.Collections;
-using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
 /// 鼠标视角控制器
 /// 负责处理第一人称视角的鼠标旋转
 /// </summary>
-public class MouseMove : MonoBehaviour
+public class MouseMovement : MonoBehaviour
 {
+    [SerializeField] private Transform cameraTransform;         // 只负责上下看的相机
     [SerializeField] private float mouseSensitivity = 100f;   // 鼠标灵敏度
     [SerializeField] private float minVerticalAngle = -90f;   // 最小垂直角度（向下看）
     [SerializeField] private float maxVerticalAngle = 90f;    // 最大垂直角度（向上看）
@@ -20,6 +19,18 @@ public class MouseMove : MonoBehaviour
     private void Start()
     {
         Cursor.lockState = CursorLockMode.Locked;
+        Cursor.visible = false;
+
+        if (cameraTransform == null)
+        {
+            Camera childCamera = GetComponentInChildren<Camera>();
+            if (childCamera != null)
+            {
+                cameraTransform = childCamera.transform;
+            }
+        }
+
+        yRotation = transform.eulerAngles.y;
     }
 
     /// <summary>
@@ -40,7 +51,12 @@ public class MouseMove : MonoBehaviour
         // 更新水平旋转（偏航）
         yRotation += mouseX;
 
-        // 应用旋转到摄像机
-        transform.localRotation = Quaternion.Euler(xRotation, yRotation, 0f);
+        // 玩家物体只水平旋转，避免前进方向带上下分量。
+        transform.rotation = Quaternion.Euler(0f, yRotation, 0f);
+
+        if (cameraTransform != null)
+        {
+            cameraTransform.localRotation = Quaternion.Euler(xRotation, 0f, 0f);
+        }
     }
 }

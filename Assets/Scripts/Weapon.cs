@@ -1,215 +1,331 @@
-using System.Collections;
-using System.Collections.Generic;
+using TMPro;
 using UnityEngine;
+using UnityEngine.UI;
 
-/// <summary>
-/// 射击模式枚举
-/// </summary>
 public enum ShootingMode
 {
-    Single,     // 单发
-    Burst,      // 连发
-    Auto        // 全自动
+    Single,
+    Auto
 }
 
-/// <summary>
-/// 武器系统
-/// 负责处理射击功能
-/// </summary>
 public class Weapon : MonoBehaviour
 {
-    [Header("引用")]
-    public Camera playerCamera;                                    // 玩家摄像机
+    [Header("References")]
+    public Camera playerCamera;
 
-    [Header("射击模式")]
-    public ShootingMode currentShootingMode;                       // 当前射击模式
+    [Header("Shooting Mode")]
+    public ShootingMode currentShootingMode = ShootingMode.Single;
+    [SerializeField] private KeyCode switchModeKey = KeyCode.B;
 
-    [Header("子弹设置")]
-    [SerializeField] private GameObject bulletPrefab;              // 子弹预制件
-    [SerializeField] private Transform bulletSpawnPoint;           // 子弹生成位置
-    [SerializeField] private float bulletSpeed = 30f;              // 子弹飞行速度
-    [SerializeField] private float bulletLifetime = 3f;            // 子弹生命周期（秒）
+    [Header("Optional Visual Projectile")]
+    [SerializeField] private bool spawnVisualProjectile;
+    [SerializeField] private GameObject bulletPrefab;
+    [SerializeField] private Transform bulletSpawnPoint;
+    [SerializeField] private float bulletSpeed = 30f;
+    [SerializeField] private float bulletLifetime = 3f;
 
-    [Header("射击设置")]
-    public bool isShooting, readyToShoot;                          // 射击状态
-    bool allowReset = true;                                        // 允许重置
-    public float shootingDelay = 0.1f;                             // 连发间隔（秒）
-    public float fireRate = 0.5f;                                  // 射击冷却时间（秒）
+    [Header("Ammo")]
+    [SerializeField] private int magazineSize = 25;
+    [SerializeField] private int totalMagazines = 3;
+    [SerializeField] private KeyCode reloadKey = KeyCode.R;
 
-    [Header("连发设置")]
-    public int bulletsPerBurst = 3;                                // 每次连发子弹数
-    public int currentBurst;                                       // 当前连发计数
+    [Header("Hitscan")]
+    [SerializeField] private float damage = 25f;
+    [SerializeField] private float raycastDistance = 300f;
+    [SerializeField] private LayerMask hitLayers = ~0;
+    [SerializeField] private float autoEmptyMagazineSeconds = 8f;
+    [SerializeField] private float spreadIntensity;
 
-    [Header("扩散设置")]
-    public float spreadIntensity;                                  // 扩散强度
+    [Header("Impact")]
+    [SerializeField] private GameObject bulletHolePrefab;
+    [SerializeField] private float bulletHoleSize = 0.1f;
+    [SerializeField] private float bulletHoleLifetime = 10f;
+
+    [Header("UI")]
+    [SerializeField] private TextMeshProUGUI ammoText;
+    [SerializeField] private TMP_FontAsset ammoFont;
+    [SerializeField] private bool createAmmoUIIfMissing = true;
+    [SerializeField] private Vector2 ammoUiOffset = new Vector2(-32f, 32f);
+    [SerializeField] private int ammoFontSize = 28;
+
+    private int currentAmmo;
+    private int reserveAmmo;
+    private float nextAutoShotTime;
+
+    public int CurrentAmmo => currentAmmo;
+    public int TotalAmmo => currentAmmo + reserveAmmo;
+    public int RemainingMagazineCount => magazineSize <= 0 ? 0 : Mathf.CeilToInt((float)TotalAmmo / magazineSize);
+
+    private float AutoFireInterval
+    {
+        get
+        {
+            if (magazineSize <= 1)
+            {
+                return 0.01f;
+            }
+
+            return Mathf.Max(0.01f, autoEmptyMagazineSeconds / (magazineSize - 1));
+        }
+    }
 
     private void Start()
     {
-        readyToShoot = true;
-        currentBurst = bulletsPerBurst;
+        if (playerCamera == null)
+        {
+            playerCamera = Camera.main;
+        }
+
+        magazineSize = Mathf.Max(1, magazineSize);
+        totalMagazines = Mathf.Max(1, totalMagazines);
+        autoEmptyMagazineSeconds = Mathf.Max(0.01f, autoEmptyMagazineSeconds);
+        raycastDistance = Mathf.Max(1f, raycastDistance);
+
+        currentAmmo = magazineSize;
+        reserveAmmo = (totalMagazines - 1) * magazineSize;
+
+        EnsureAmmoUI();
+        UpdateAmmoUI();
     }
 
     private void Update()
     {
-        HandleShooting();
         HandleModeSwitch();
+        HandleReload();
+        HandleShooting();
     }
 
-    /// <summary>
-    /// 处理射击模式切换
-    /// </summary>
     private void HandleModeSwitch()
     {
-        if (Input.GetKeyDown(KeyCode.B))
+        if (!Input.GetKeyDown(switchModeKey))
         {
-            // 切换到下一个射击模式
-            currentShootingMode = (ShootingMode)(((int)currentShootingMode + 1) % 3);
-            Debug.Log("切换射击模式: " + currentShootingMode);
+            return;
+        }
+
+        currentShootingMode = currentShootingMode == ShootingMode.Single
+            ? ShootingMode.Auto
+            : ShootingMode.Single;
+
+        Debug.Log("Switched shooting mode: " + GetModeLabel());
+        UpdateAmmoUI();
+    }
+
+    private void HandleReload()
+    {
+        if (Input.GetKeyDown(reloadKey))
+        {
+            TryReload();
         }
     }
 
-    /// <summary>
-    /// 处理射击逻辑
-    /// </summary>
     private void HandleShooting()
     {
-        // 检查是否做好射击准备
-        if (!readyToShoot) return;
-
-        // 根据不同射击模式处理输入
         switch (currentShootingMode)
         {
             case ShootingMode.Single:
-                // 单发模式：每次点击射击一次
                 if (Input.GetButtonDown("Fire1"))
                 {
-                    currentBurst = 1;
-                    Shoot();
-                }
-                break;
-
-            case ShootingMode.Burst:
-                // 连发模式：每次点击射击多发
-                if (Input.GetButtonDown("Fire1"))
-                {
-                    currentBurst = bulletsPerBurst;
-                    Shoot();
+                    TryShoot();
                 }
                 break;
 
             case ShootingMode.Auto:
-                // 全自动模式：按住持续射击
-                if (Input.GetButton("Fire1"))
+                if (Input.GetButton("Fire1") && Time.time >= nextAutoShotTime)
                 {
-                    currentBurst = 1;
-                    Shoot();
+                    TryShoot();
+                    nextAutoShotTime = Time.time + AutoFireInterval;
                 }
                 break;
         }
     }
 
-    /// <summary>
-    /// 射击
-    /// </summary>
-    private void Shoot()
+    private bool TryShoot()
     {
-        // 射击开始，设置为false防止连续射击
-        readyToShoot = false;
-
-        // 计算射击方向（包含散布）
-        Vector3 shootingDirection = CalculateDirectionAndSpread();
-
-        // 生成子弹
-        if (bulletPrefab != null && bulletSpawnPoint != null)
+        if (currentAmmo <= 0)
         {
-            // 子弹实例化，将子弹前向轴对准射击方向
-            GameObject bullet = Instantiate(bulletPrefab, bulletSpawnPoint.position, Quaternion.LookRotation(shootingDirection));
-
-            Rigidbody rb = bullet.GetComponent<Rigidbody>();
-            if (rb != null)
+            if (!TryReload())
             {
-                rb.velocity = shootingDirection * bulletSpeed;
+                Debug.Log("Out of ammo");
             }
 
-            StartCoroutine(DestroyBulletAfterTime(bullet, bulletLifetime));
+            UpdateAmmoUI();
+            return false;
         }
 
-        currentBurst--;
+        currentAmmo--;
+        FireHitscan();
+        UpdateAmmoUI();
 
-        // 实现射击重置
-        if (currentBurst > 0)
-        {
-            // 还有子弹要射击，使用连发间隔继续射击
-            Invoke("Shoot", shootingDelay);
-        }
-        else
-        {
-            // 连发完成，使用射击冷却时间后重置
-            if (allowReset)
-            {
-                Invoke("ResetShot", fireRate);
-                allowReset = false;
-            }
-        }
+        return true;
     }
 
-    /// <summary>
-    /// 重置射击状态
-    /// </summary>
-    private void ResetShot()
+    private bool TryReload()
     {
-        readyToShoot = true;
-        allowReset = true;  // 重置为真，允许下次射击后重置
+        if (currentAmmo >= magazineSize || reserveAmmo <= 0)
+        {
+            UpdateAmmoUI();
+            return false;
+        }
+
+        int neededAmmo = magazineSize - currentAmmo;
+        int loadedAmmo = Mathf.Min(neededAmmo, reserveAmmo);
+
+        currentAmmo += loadedAmmo;
+        reserveAmmo -= loadedAmmo;
+
+        UpdateAmmoUI();
+        return true;
     }
 
-    /// <summary>
-    /// 计算射击方向和散布
-    /// </summary>
-    private Vector3 CalculateDirectionAndSpread()
+    private void FireHitscan()
     {
-        // 从屏幕中心发射射线检测瞄准点
-        Ray ray = playerCamera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0));
-        RaycastHit hit;
+        Ray aimRay = GetAimRay();
+        Vector3 targetPoint = aimRay.origin + aimRay.direction * raycastDistance;
 
-        Vector3 targetPoint;
-        if (Physics.Raycast(ray, out hit))
+        if (Physics.Raycast(aimRay, out RaycastHit hit, raycastDistance, hitLayers, QueryTriggerInteraction.Ignore))
         {
-            // 射线击中物体，使用击中点作为目标
             targetPoint = hit.point;
-        }
-        else
-        {
-            // 射线未击中，使用射线前方100单位处作为目标
-            targetPoint = ray.GetPoint(100f);
-        }
+            hit.collider.SendMessageUpwards("TakeDamage", damage, SendMessageOptions.DontRequireReceiver);
+            CreateBulletHole(hit);
 
-        // 计算从子弹生成点到目标点的方向
-        Vector3 direction = targetPoint - bulletSpawnPoint.position;
-
-        // 添加扩散
-        if (spreadIntensity > 0)
-        {
-            direction += new Vector3(
-                Random.Range(-spreadIntensity, spreadIntensity),
-                Random.Range(-spreadIntensity, spreadIntensity),
-                0
-            );
+            if (hit.collider.CompareTag("Target"))
+            {
+                Debug.Log("Hit " + hit.collider.name);
+            }
         }
 
-        // 归一化处理
-        direction.Normalize();
-
-        return direction;
+        SpawnOptionalVisualProjectile(targetPoint);
     }
-    private IEnumerator DestroyBulletAfterTime(GameObject bullet, float delay)
-    {
-        // 等待指定时间
-        yield return new WaitForSeconds(delay);
 
-        // 销毁子弹（如果子弹还存在）
-        if (bullet != null)
+    private Ray GetAimRay()
+    {
+        Transform aimTransform = playerCamera != null
+            ? playerCamera.transform
+            : bulletSpawnPoint != null ? bulletSpawnPoint : transform;
+
+        Vector3 origin = playerCamera != null
+            ? playerCamera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f)).origin
+            : aimTransform.position;
+
+        Vector3 direction = playerCamera != null
+            ? playerCamera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f)).direction
+            : aimTransform.forward;
+
+        if (spreadIntensity > 0f)
         {
-            Destroy(bullet);
+            direction += aimTransform.right * Random.Range(-spreadIntensity, spreadIntensity);
+            direction += aimTransform.up * Random.Range(-spreadIntensity, spreadIntensity);
         }
+
+        return new Ray(origin, direction.normalized);
+    }
+
+    private void SpawnOptionalVisualProjectile(Vector3 targetPoint)
+    {
+        if (!spawnVisualProjectile || bulletPrefab == null || bulletSpawnPoint == null)
+        {
+            return;
+        }
+
+        Vector3 direction = (targetPoint - bulletSpawnPoint.position).normalized;
+        if (direction.sqrMagnitude <= 0.0001f)
+        {
+            direction = bulletSpawnPoint.forward;
+        }
+
+        GameObject bullet = Instantiate(
+            bulletPrefab,
+            bulletSpawnPoint.position,
+            Quaternion.LookRotation(direction));
+
+        Rigidbody rb = bullet.GetComponent<Rigidbody>();
+        if (rb != null)
+        {
+            rb.velocity = direction * bulletSpeed;
+        }
+
+        Destroy(bullet, bulletLifetime);
+    }
+
+    private void CreateBulletHole(RaycastHit hit)
+    {
+        if (bulletHolePrefab == null)
+        {
+            return;
+        }
+
+        Quaternion hitRotation = Quaternion.LookRotation(hit.normal);
+        GameObject bulletHole = Instantiate(
+            bulletHolePrefab,
+            hit.point + hit.normal * 0.001f,
+            hitRotation);
+
+        float randomSize = bulletHoleSize * Random.Range(0.8f, 1.2f);
+        bulletHole.transform.localScale = Vector3.one * randomSize;
+        bulletHole.transform.Rotate(hit.normal, Random.Range(0f, 360f), Space.World);
+        bulletHole.transform.SetParent(hit.collider.transform);
+
+        Destroy(bulletHole, bulletHoleLifetime);
+    }
+
+    private void EnsureAmmoUI()
+    {
+        if (ammoText != null || !createAmmoUIIfMissing)
+        {
+            return;
+        }
+
+        GameObject canvasObject = new GameObject("Ammo UI Canvas", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+        Canvas canvas = canvasObject.GetComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvas.sortingOrder = 100;
+
+        CanvasScaler scaler = canvasObject.GetComponent<CanvasScaler>();
+        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+        scaler.referenceResolution = new Vector2(1920f, 1080f);
+        scaler.matchWidthOrHeight = 0.5f;
+
+        GameObject textObject = new GameObject("Ammo Text", typeof(RectTransform), typeof(TextMeshProUGUI), typeof(Shadow));
+        textObject.transform.SetParent(canvasObject.transform, false);
+
+        ammoText = textObject.GetComponent<TextMeshProUGUI>();
+        if (ammoFont != null)
+        {
+            ammoText.font = ammoFont;
+        }
+
+        ammoText.alignment = TextAlignmentOptions.BottomRight;
+        ammoText.fontSize = ammoFontSize;
+        ammoText.color = Color.white;
+        ammoText.raycastTarget = false;
+
+        Shadow shadow = textObject.GetComponent<Shadow>();
+        shadow.effectColor = new Color(0f, 0f, 0f, 0.65f);
+        shadow.effectDistance = new Vector2(2f, -2f);
+
+        RectTransform rectTransform = ammoText.rectTransform;
+        rectTransform.anchorMin = new Vector2(1f, 0f);
+        rectTransform.anchorMax = new Vector2(1f, 0f);
+        rectTransform.pivot = new Vector2(1f, 0f);
+        rectTransform.anchoredPosition = ammoUiOffset;
+        rectTransform.sizeDelta = new Vector2(360f, 120f);
+    }
+
+    private void UpdateAmmoUI()
+    {
+        if (ammoText == null)
+        {
+            return;
+        }
+
+        ammoText.text =
+            $"MODE: {GetModeLabel()}\n" +
+            $"AMMO: {currentAmmo} / {TotalAmmo}\n" +
+            $"MAGS: {RemainingMagazineCount}";
+    }
+
+    private string GetModeLabel()
+    {
+        return currentShootingMode == ShootingMode.Auto ? "AUTO" : "SINGLE";
     }
 }

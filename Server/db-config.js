@@ -1,10 +1,14 @@
+const { loadEnv, readInt } = require('./env');
+
+loadEnv();
+
 module.exports = {
-    host: 'localhost',
-    port: 3306,
-    user: 'root',
-    password: '123456',
-    database: 'fps_game',
+    host: process.env.DB_HOST || 'localhost',
+    port: readInt('DB_PORT', 3306),
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASSWORD || '123456',
+    database: process.env.DB_NAME || 'fps_game',
     waitForConnections: true,
-    connectionLimit: 10,
+    connectionLimit: readInt('DB_CONNECTION_LIMIT', 10),
     queueLimit: 0
 };

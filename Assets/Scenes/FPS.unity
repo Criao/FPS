@@ -250,7 +250,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: 4.51, y: 2.477, z: 19.936}
-  m_LocalScale: {x: -2.0257118, y: 2.3014123, z: 0.30845}
+  m_LocalScale: {x: 2.0257118, y: 2.3014123, z: 0.30845}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
@@ -1076,7 +1076,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: 0.54525876, y: 2.477, z: 19.936}
-  m_LocalScale: {x: -2.0257118, y: 2.3014123, z: 0.30845}
+  m_LocalScale: {x: 2.025712, y: 2.3014123, z: 0.30845}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
@@ -1307,7 +1307,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: -4.3, y: 2.477, z: 19.936}
-  m_LocalScale: {x: -2.0257118, y: 2.3014123, z: 0.30845}
+  m_LocalScale: {x: 2.025712, y: 2.3014123, z: 0.30845}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
@@ -1615,18 +1615,32 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   playerCamera: {fileID: 330585545}
   currentShootingMode: 0
+  switchModeKey: 98
+  spawnVisualProjectile: 0
   bulletPrefab: {fileID: 5696192388835206061, guid: 70762f215f0f658498087bb6a24b8643,
     type: 3}
   bulletSpawnPoint: {fileID: 557575971}
   bulletSpeed: 100
   bulletLifetime: 3
-  isShooting: 0
-  readyToShoot: 0
-  shootingDelay: 2
-  fireRate: 0.5
-  bulletsPerBurst: 3
-  currentBurst: 0
+  magazineSize: 25
+  totalMagazines: 3
+  reloadKey: 114
+  damage: 25
+  raycastDistance: 300
+  hitLayers:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  autoEmptyMagazineSeconds: 8
   spreadIntensity: 0
+  bulletHolePrefab: {fileID: 7661458499164986501, guid: d6208d10991b6224592327c3bd8375ee,
+    type: 3}
+  bulletHoleSize: 0.5
+  bulletHoleLifetime: 10
+  ammoText: {fileID: 0}
+  ammoFont: {fileID: 0}
+  createAmmoUIIfMissing: 1
+  ammoUiOffset: {x: -32, y: 32}
+  ammoFontSize: 28
 --- !u!1 &2106645886
 GameObject:
   m_ObjectHideFlags: 0

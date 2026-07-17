@@ -93,6 +93,11 @@ namespace FPSGame.Core
                 CurrentState = GameState.Downloading;
                 Utils.Logger.Log("开始下载更新...");
                 yield return HotUpdateManager.Instance.DownloadUpdates();
+
+                if (!HotUpdateManager.Instance.LastDownloadSucceeded)
+                {
+                    Utils.Logger.LogWarning("热更新下载失败，继续进入登录流程");
+                }
             }
             else
             {
@@ -101,8 +106,15 @@ namespace FPSGame.Core
 
             // 3. 进入登录流程
             CurrentState = GameState.Login;
-            Utils.Logger.Log("进入登录场景");
-            SceneManager.LoadScene("Login");
+            if (SceneManager.GetActiveScene().name != "Login")
+            {
+                Utils.Logger.Log("进入登录场景");
+                SceneManager.LoadScene("Login");
+            }
+            else
+            {
+                Utils.Logger.Log("当前已在登录场景");
+            }
         }
 
         /// <summary>

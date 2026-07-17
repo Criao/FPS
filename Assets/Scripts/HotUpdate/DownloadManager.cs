@@ -95,7 +95,7 @@ namespace FPSGame.HotUpdate
             if (File.Exists(task.savePath))
             {
                 string existingHash = CalculateMD5(task.savePath);
-                if (existingHash == task.expectedHash)
+                if (HashMatches(existingHash, task.expectedHash))
                 {
                     Utils.Logger.Log($"File already exists and verified: {Path.GetFileName(task.savePath)}");
                     task.onComplete?.Invoke(true, "File already exists");
@@ -108,10 +108,18 @@ namespace FPSGame.HotUpdate
                 }
             }
 
+            string tempPath = task.savePath + ".download";
+            if (File.Exists(tempPath))
+            {
+                File.Delete(tempPath);
+            }
+
             Utils.Logger.Log($"Downloading: {task.url}");
 
             UnityWebRequest request = UnityWebRequest.Get(task.url);
-            request.downloadHandler = new DownloadHandlerFile(task.savePath);
+            request.SetRequestHeader("Cache-Control", "no-cache");
+            request.SetRequestHeader("Pragma", "no-cache");
+            request.downloadHandler = new DownloadHandlerFile(tempPath);
             request.timeout = (int)TimeoutSeconds;
 
             var operation = request.SendWebRequest();
@@ -125,16 +133,26 @@ namespace FPSGame.HotUpdate
             if (request.result == UnityWebRequest.Result.Success)
             {
                 // 校验文件
-                string fileHash = CalculateMD5(task.savePath);
-                if (fileHash == task.expectedHash)
+                string fileHash = CalculateMD5(tempPath);
+                long fileSize = File.Exists(tempPath) ? new FileInfo(tempPath).Length : 0;
+                if (HashMatches(fileHash, task.expectedHash))
                 {
+                    if (File.Exists(task.savePath))
+                    {
+                        File.Delete(task.savePath);
+                    }
+
+                    File.Move(tempPath, task.savePath);
                     Utils.Logger.Log($"Download successful: {Path.GetFileName(task.savePath)}");
                     task.onComplete?.Invoke(true, "Download successful");
                 }
                 else
                 {
-                    Utils.Logger.LogError($"Hash mismatch: {Path.GetFileName(task.savePath)}");
-                    File.Delete(task.savePath);
+                    Utils.Logger.LogError($"Hash mismatch: {Path.GetFileName(task.savePath)} expected={task.expectedHash} actual={fileHash} bytes={fileSize}");
+                    if (File.Exists(tempPath))
+                    {
+                        File.Delete(tempPath);
+                    }
 
                     // 重试
                     if (task.retryCount < MaxRetryCount)
@@ -152,6 +170,10 @@ namespace FPSGame.HotUpdate
             else
             {
                 Utils.Logger.LogError($"Download failed: {request.error}");
+                if (File.Exists(tempPath))
+                {
+                    File.Delete(tempPath);
+                }
 
                 // 重试
                 if (task.retryCount < MaxRetryCount)
@@ -167,6 +189,11 @@ namespace FPSGame.HotUpdate
             }
 
             request.Dispose();
+        }
+
+        private static bool HashMatches(string actualHash, string expectedHash)
+        {
+            return string.Equals(actualHash, expectedHash, StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>

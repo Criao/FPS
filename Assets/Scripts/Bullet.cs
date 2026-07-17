@@ -1,67 +1,52 @@
-using System.Collections;
-using System.Collections.Generic;
 using UnityEngine;
 
-/// <summary>
-/// 子弹脚本
-/// 负责处理子弹的碰撞和伤害
-/// </summary>
 public class Bullet : MonoBehaviour
 {
-    [Header("子弹设置")]
-    [SerializeField] private float damage = 25f;                   // 伤害值
+    [Header("Damage")]
+    [SerializeField] private float damage = 25f;
 
-    [Header("弹孔效果")]
-    [SerializeField] private GameObject bulletHolePrefab;          // 弹孔预制件
-    [SerializeField] private float bulletHoleSize = 0.1f;          // 弹孔大小
-    [SerializeField] private float bulletHoleLifetime = 10f;       // 弹孔存在时间
+    [Header("Impact")]
+    [SerializeField] private GameObject bulletHolePrefab;
+    [SerializeField] private float bulletHoleSize = 0.1f;
+    [SerializeField] private float bulletHoleLifetime = 10f;
+
+    public float Damage => damage;
 
     private void OnCollisionEnter(Collision collision)
     {
-        // 生成弹孔效果
         CreateBulletHole(collision);
+        collision.gameObject.SendMessageUpwards("TakeDamage", damage, SendMessageOptions.DontRequireReceiver);
 
         if (collision.gameObject.CompareTag("Target"))
         {
-            print("hit " + collision.gameObject.name + " !");
-            Destroy(gameObject);
+            Debug.Log("Hit " + collision.gameObject.name);
         }
-        else if (collision.gameObject.CompareTag("Wall"))
+
+        if (collision.gameObject.CompareTag("Target") || collision.gameObject.CompareTag("Wall"))
         {
             Destroy(gameObject);
         }
     }
 
-    /// <summary>
-    /// 创建弹孔效果
-    /// </summary>
     private void CreateBulletHole(Collision collision)
     {
-        if (bulletHolePrefab == null) return;
+        if (bulletHolePrefab == null || collision.contactCount == 0)
+        {
+            return;
+        }
 
-        // 获取碰撞点信息
         ContactPoint contact = collision.contacts[0];
-        Vector3 hitPosition = contact.point;
-        Vector3 hitNormal = contact.normal;
+        Quaternion hitRotation = Quaternion.LookRotation(contact.normal);
+        GameObject bulletHole = Instantiate(
+            bulletHolePrefab,
+            contact.point + contact.normal * 0.001f,
+            hitRotation);
 
-        // 创建弹孔，使其朝向表面法线方向
-        Quaternion hitRotation = Quaternion.LookRotation(hitNormal);
-        GameObject bulletHole = Instantiate(bulletHolePrefab, hitPosition, hitRotation);
-
-        // 稍微偏移弹孔，避免Z-fighting
-        bulletHole.transform.position += hitNormal * 0.001f;
-
-        // 设置弹孔大小（添加随机变化）
         float randomSize = bulletHoleSize * Random.Range(0.8f, 1.2f);
         bulletHole.transform.localScale = Vector3.one * randomSize;
-
-        // 随机旋转弹孔（绕法线旋转）
-        bulletHole.transform.Rotate(hitNormal, Random.Range(0f, 360f), Space.World);
-
-        // 将弹孔设为击中物体的子物体（可选）
+        bulletHole.transform.Rotate(contact.normal, Random.Range(0f, 360f), Space.World);
         bulletHole.transform.SetParent(collision.transform);
 
-        // 在指定时间后销毁弹孔
         Destroy(bulletHole, bulletHoleLifetime);
     }
 }

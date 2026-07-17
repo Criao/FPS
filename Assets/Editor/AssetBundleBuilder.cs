@@ -3,6 +3,7 @@ using UnityEngine;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using System.Collections.Generic;
 
 /// <summary>
 /// AssetBundle 构建工具
@@ -10,6 +11,10 @@ using System.Text;
 /// </summary>
 public class AssetBundleBuilder : EditorWindow
 {
+    private const string ManifestVersion = "1.1.2";
+    private const int ManifestBuildNumber = 4;
+    private const string TestBundlePlaceholder = "test_bundle.unity3d";
+
     /// <summary>
     /// 构建所有 AssetBundles
     /// 菜单路径: Tools/Build AssetBundles
@@ -23,6 +28,8 @@ public class AssetBundleBuilder : EditorWindow
         {
             Directory.CreateDirectory(outputPath);
         }
+
+        CleanOutputDirectory(outputPath);
 
         // 构建 AssetBundles
         BuildPipeline.BuildAssetBundles(
@@ -40,6 +47,15 @@ public class AssetBundleBuilder : EditorWindow
         Debug.Log($"AssetBundles built to: {outputPath}");
     }
 
+    static void CleanOutputDirectory(string outputPath)
+    {
+        DirectoryInfo dir = new DirectoryInfo(outputPath);
+        foreach (FileInfo file in dir.GetFiles())
+        {
+            file.Delete();
+        }
+    }
+
     /// <summary>
     /// 重命名 AssetBundle 文件，添加 .unity3d 扩展名
     /// </summary>
@@ -55,11 +71,13 @@ public class AssetBundleBuilder : EditorWindow
                 continue;
 
             string newName = file.FullName + ".unity3d";
-            if (!File.Exists(newName))
+            if (File.Exists(newName))
             {
-                file.MoveTo(newName);
-                Debug.Log($"Renamed: {file.Name} -> {file.Name}.unity3d");
+                File.Delete(newName);
             }
+
+            file.MoveTo(newName);
+            Debug.Log($"Renamed: {file.Name} -> {file.Name}.unity3d");
         }
     }
 
@@ -71,14 +89,28 @@ public class AssetBundleBuilder : EditorWindow
     {
         StringBuilder manifestJson = new StringBuilder();
         manifestJson.AppendLine("{");
-        manifestJson.AppendLine("  \"version\": \"1.1.0\",");
-        manifestJson.AppendLine("  \"buildNumber\": 2,");
+        manifestJson.AppendLine($"  \"version\": \"{ManifestVersion}\",");
+        manifestJson.AppendLine($"  \"buildNumber\": {ManifestBuildNumber},");
         manifestJson.AppendLine("  \"bundles\": [");
 
         DirectoryInfo dir = new DirectoryInfo(bundlePath);
-        FileInfo[] files = dir.GetFiles("*.unity3d");
+        List<FileInfo> files = new List<FileInfo>();
 
-        for (int i = 0; i < files.Length; i++)
+        FileInfo mainManifestBundle = new FileInfo(Path.Combine(bundlePath, "bundles"));
+        if (mainManifestBundle.Exists)
+        {
+            files.Add(mainManifestBundle);
+        }
+
+        foreach (FileInfo bundleFile in dir.GetFiles("*.unity3d"))
+        {
+            if (bundleFile.Name == TestBundlePlaceholder)
+                continue;
+
+            files.Add(bundleFile);
+        }
+
+        for (int i = 0; i < files.Count; i++)
         {
             FileInfo file = files[i];
             string hash = CalculateMD5(file.FullName);
@@ -89,7 +121,7 @@ public class AssetBundleBuilder : EditorWindow
             manifestJson.AppendLine($"      \"size\": {file.Length}");
             manifestJson.Append("    }");
 
-            if (i < files.Length - 1)
+            if (i < files.Count - 1)
                 manifestJson.AppendLine(",");
             else
                 manifestJson.AppendLine();

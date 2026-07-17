@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
 using FPSGame.Utils;
+using FPSGame.Core;
 
 namespace FPSGame.UI
 {
@@ -36,9 +37,6 @@ namespace FPSGame.UI
                 DontDestroyOnLoad(loginManagerObj);
             }
 
-            // 检查热更新
-            StartCoroutine(CheckHotUpdate());
-
             // 绑定按钮事件
             loginButton.onClick.AddListener(OnLoginButtonClick);
             guestLoginButton.onClick.AddListener(OnGuestLoginButtonClick);
@@ -58,42 +56,18 @@ namespace FPSGame.UI
             // 尝试加载记住的账号密码
             LoadRememberedCredentials();
 
-            // 暂时禁用自动登录，避免报错
-            // StartCoroutine(TryAutoLogin());
-        }
-
-        private System.Collections.IEnumerator CheckHotUpdate()
-        {
-            // 确保 HotUpdateManager 存在
-            if (HotUpdate.HotUpdateManager.Instance == null)
-            {
-                GameObject hotUpdateObj = new GameObject("HotUpdateManager");
-                hotUpdateObj.AddComponent<HotUpdate.HotUpdateManager>();
-                DontDestroyOnLoad(hotUpdateObj);
-            }
-
-            ShowMessage("Checking for updates...", Color.yellow);
-
-            yield return HotUpdate.HotUpdateManager.Instance.CheckForUpdates();
-
-            if (HotUpdate.HotUpdateManager.Instance.HasUpdate)
-            {
-                ShowMessage("Downloading updates...", Color.yellow);
-
-                yield return HotUpdate.HotUpdateManager.Instance.DownloadUpdates((progress) =>
-                {
-                    ShowMessage($"Downloading... {(int)(progress * 100)}%", Color.yellow);
-                });
-
-                ShowMessage("Update complete!", Color.green);
-                yield return new WaitForSeconds(1f);
-            }
-
-            ShowMessage("", Color.white);
+            StartCoroutine(TryAutoLogin());
         }
 
         private System.Collections.IEnumerator TryAutoLogin()
         {
+            while (GameManager.Instance != null &&
+                   GameManager.Instance.CurrentState != GameManager.GameState.Login &&
+                   GameManager.Instance.CurrentState != GameManager.GameState.InGame)
+            {
+                yield return null;
+            }
+
             yield return Login.LoginManager.Instance.TryAutoLogin((success) =>
             {
                 if (success)
@@ -112,12 +86,10 @@ namespace FPSGame.UI
         private void LoadRememberedCredentials()
         {
             string savedUsername = Login.TokenManager.Instance.GetRememberedUsername();
-            string savedPassword = Login.TokenManager.Instance.GetRememberedPassword();
 
             if (!string.IsNullOrEmpty(savedUsername))
             {
                 usernameInput.text = savedUsername;
-                passwordInput.text = savedPassword;
                 rememberMeToggle.isOn = true;
             }
         }

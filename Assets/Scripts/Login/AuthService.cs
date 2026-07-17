@@ -29,6 +29,46 @@ namespace FPSGame.Login
         }
 
         /// <summary>
+        /// 验证本地保存的 Token
+        /// </summary>
+        public IEnumerator VerifyToken(string token, Action<bool, string, UserData> callback)
+        {
+            var request = new VerifyTokenRequest { token = token };
+            string json = JsonHelper.ToJson(request);
+            string url = GetApiUrl("/api/auth/verify");
+
+            bool requestComplete = false;
+            bool requestSuccess = false;
+            string responseData = "";
+
+            yield return NetworkManager.Instance.PostWithToken(url, json, token, (success, data) =>
+            {
+                requestComplete = true;
+                requestSuccess = success;
+                responseData = data;
+            });
+
+            yield return new WaitUntil(() => requestComplete);
+
+            if (requestSuccess)
+            {
+                var response = JsonHelper.FromJson<LoginResponse>(responseData);
+                if (response != null && response.success)
+                {
+                    callback?.Invoke(true, response.message, response.data);
+                }
+                else
+                {
+                    callback?.Invoke(false, response?.message ?? "Token verification failed", null);
+                }
+            }
+            else
+            {
+                callback?.Invoke(false, $"Network error: {responseData}", null);
+            }
+        }
+
+        /// <summary>
         /// 游客登录
         /// </summary>
         public IEnumerator GuestLogin(Action<bool, string, UserData> callback)
@@ -200,6 +240,99 @@ namespace FPSGame.Login
                 else
                 {
                     callback?.Invoke(false, response?.message ?? "Request failed");
+                }
+            }
+            else
+            {
+                callback?.Invoke(false, $"Network error: {responseData}");
+            }
+        }
+
+        /// <summary>
+        /// 重置密码
+        /// </summary>
+        public IEnumerator ResetPassword(string email, string resetCode, string newPassword, Action<bool, string> callback)
+        {
+            string passwordHash = Crypto.SHA256Hash(newPassword);
+            var request = new ResetPasswordRequest
+            {
+                email = email,
+                resetCode = resetCode,
+                passwordHash = passwordHash
+            };
+
+            string json = JsonHelper.ToJson(request);
+            string url = GetApiUrl("/api/auth/reset-password");
+
+            bool requestComplete = false;
+            bool requestSuccess = false;
+            string responseData = "";
+
+            yield return NetworkManager.Instance.Post(url, json, (success, data) =>
+            {
+                requestComplete = true;
+                requestSuccess = success;
+                responseData = data;
+            });
+
+            yield return new WaitUntil(() => requestComplete);
+
+            if (requestSuccess)
+            {
+                var response = JsonHelper.FromJson<CommonResponse>(responseData);
+                if (response != null && response.success)
+                {
+                    callback?.Invoke(true, response.message);
+                }
+                else
+                {
+                    callback?.Invoke(false, response?.message ?? "Password reset failed");
+                }
+            }
+            else
+            {
+                callback?.Invoke(false, $"Network error: {responseData}");
+            }
+        }
+
+        /// <summary>
+        /// 注销当前后端会话
+        /// </summary>
+        public IEnumerator Logout(string token, Action<bool, string> callback)
+        {
+            if (string.IsNullOrEmpty(token))
+            {
+                callback?.Invoke(true, "Logged out");
+                yield break;
+            }
+
+            var request = new VerifyTokenRequest { token = token };
+            string json = JsonHelper.ToJson(request);
+            string url = GetApiUrl("/api/auth/logout");
+
+            bool requestComplete = false;
+            bool requestSuccess = false;
+            string responseData = "";
+
+            yield return NetworkManager.Instance.PostWithToken(url, json, token, (success, data) =>
+            {
+                requestComplete = true;
+                requestSuccess = success;
+                responseData = data;
+            });
+
+            yield return new WaitUntil(() => requestComplete);
+
+            if (requestSuccess)
+            {
+                var response = JsonHelper.FromJson<CommonResponse>(responseData);
+                if (response != null && response.success)
+                {
+                    callback?.Invoke(true, response.message);
+                }
+                else
+                {
+                    callback?.Invoke(false, response?.message ?? "Logout failed");
                 }
             }
             else

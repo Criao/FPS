@@ -11,6 +11,7 @@ namespace FPSGame.Core
     public class ConfigManager : MonoBehaviour
     {
         public static ConfigManager Instance { get; private set; }
+        private const string SavedAppVersionFileName = "AppVersion.json";
 
         public ServerConfig ServerConfig { get; private set; }
         public AppVersion AppVersion { get; private set; }
@@ -55,6 +56,11 @@ namespace FPSGame.Core
 
         private void LoadAppVersion()
         {
+            if (TryLoadSavedAppVersion())
+            {
+                return;
+            }
+
             TextAsset versionAsset = Resources.Load<TextAsset>("Config/AppVersion");
             if (versionAsset != null)
             {
@@ -68,16 +74,42 @@ namespace FPSGame.Core
             }
         }
 
+        private bool TryLoadSavedAppVersion()
+        {
+            string path = Path.Combine(Application.persistentDataPath, SavedAppVersionFileName);
+            if (!File.Exists(path))
+            {
+                return false;
+            }
+
+            string json = File.ReadAllText(path);
+            AppVersion savedVersion = JsonHelper.FromJson<AppVersion>(json);
+            if (savedVersion == null || string.IsNullOrEmpty(savedVersion.version))
+            {
+                Utils.Logger.LogWarning("本地保存的版本文件无效，使用 Resources 默认版本");
+                return false;
+            }
+
+            AppVersion = savedVersion;
+            Utils.Logger.Log($"应用版本: {AppVersion.version} (Build {AppVersion.buildNumber})");
+            return true;
+        }
+
         /// <summary>
         /// 保存版本信息（热更新后更新本地版本号）
         /// </summary>
         public void SaveAppVersion(string version, int buildNumber)
         {
+            if (AppVersion == null)
+            {
+                AppVersion = new AppVersion();
+            }
+
             AppVersion.version = version;
             AppVersion.buildNumber = buildNumber;
 
             string json = JsonHelper.ToJson(AppVersion, true);
-            string path = Path.Combine(Application.persistentDataPath, "AppVersion.json");
+            string path = Path.Combine(Application.persistentDataPath, SavedAppVersionFileName);
             File.WriteAllText(path, json);
             Utils.Logger.Log($"版本信息已保存: {version}");
         }

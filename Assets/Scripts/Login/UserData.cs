@@ -58,6 +58,26 @@ namespace FPSGame.Login
     }
 
     /// <summary>
+    /// Token 验证请求
+    /// </summary>
+    [Serializable]
+    public class VerifyTokenRequest
+    {
+        public string token;
+    }
+
+    /// <summary>
+    /// 重置密码请求
+    /// </summary>
+    [Serializable]
+    public class ResetPasswordRequest
+    {
+        public string email;
+        public string resetCode;
+        public string passwordHash;
+    }
+
+    /// <summary>
     /// 登录响应
     /// </summary>
     [Serializable]

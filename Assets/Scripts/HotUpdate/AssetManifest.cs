@@ -5,13 +5,15 @@ using UnityEngine;
 namespace FPSGame.HotUpdate
 {
     /// <summary>
-    /// 资源清单 - 描述所有可热更新的资源
+    /// Describes the hot-update bundle catalog published by the server.
     /// </summary>
     [Serializable]
     public class AssetManifest
     {
         public string version;
         public int buildNumber;
+        public bool forceUpdate;
+        public string updateDescription;
         public List<AssetBundleInfo> bundles = new List<AssetBundleInfo>();
 
         public long GetTotalSize()
@@ -26,15 +28,15 @@ namespace FPSGame.HotUpdate
     }
 
     /// <summary>
-    /// AssetBundle 信息
+    /// One downloadable AssetBundle entry.
     /// </summary>
     [Serializable]
     public class AssetBundleInfo
     {
-        public string name;           // bundle名称 (例如: "scenes/fps.bundle")
-        public string hash;           // MD5哈希值
-        public long size;             // 文件大小(字节)
-        public int priority;          // 下载优先级 (数字越大越优先)
-        public List<string> dependencies = new List<string>(); // 依赖的其他bundle
+        public string name;
+        public string hash;
+        public long size;
+        public int priority;
+        public List<string> dependencies = new List<string>();
     }
 }

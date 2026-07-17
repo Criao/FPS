@@ -16,6 +16,7 @@ namespace FPSGame.HotUpdate
         public static HotUpdateManager Instance { get; private set; }
 
         public bool HasUpdate { get; private set; }
+        public bool LastDownloadSucceeded { get; private set; }
         public VersionInfo RemoteVersion { get; private set; }
         public VersionInfo LocalVersion { get; private set; }
 
@@ -99,6 +100,8 @@ namespace FPSGame.HotUpdate
         /// </summary>
         public IEnumerator DownloadUpdates(Action<float> onProgress = null)
         {
+            LastDownloadSucceeded = false;
+
             if (!HasUpdate || RemoteVersion == null)
             {
                 Utils.Logger.LogWarning("No updates available");
@@ -108,7 +111,7 @@ namespace FPSGame.HotUpdate
             Utils.Logger.Log($"Starting download, size: {RemoteVersion.totalSize / 1024 / 1024}MB");
 
             // 下载资源清单
-            string manifestUrl = RemoteVersion.catalogUrl;
+            string manifestUrl = AddCacheBuster(RemoteVersion.catalogUrl, RemoteVersion.buildNumber.ToString());
             bool manifestDownloaded = false;
             AssetManifest remoteManifest = null;
 
@@ -149,6 +152,7 @@ namespace FPSGame.HotUpdate
             {
                 Utils.Logger.Log("All files are up to date");
                 ConfigManager.Instance.SaveAppVersion(RemoteVersion.version, RemoteVersion.buildNumber);
+                LastDownloadSucceeded = true;
                 yield break;
             }
 
@@ -161,7 +165,7 @@ namespace FPSGame.HotUpdate
 
             foreach (var bundleInfo in bundlesToDownload)
             {
-                string bundleUrl = GetBundleUrl(bundleInfo.name);
+                string bundleUrl = GetBundleUrl(bundleInfo.name, bundleInfo.hash);
                 string savePath = System.IO.Path.Combine(cachePath, bundleInfo.name);
 
                 bool fileDownloaded = false;
@@ -208,6 +212,7 @@ namespace FPSGame.HotUpdate
 
             // 更新本地版本号
             ConfigManager.Instance.SaveAppVersion(RemoteVersion.version, RemoteVersion.buildNumber);
+            LastDownloadSucceeded = true;
             Utils.Logger.Log("Update completed successfully");
         }
 
@@ -252,10 +257,16 @@ namespace FPSGame.HotUpdate
         /// <summary>
         /// 获取 Bundle 下载地址
         /// </summary>
-        private string GetBundleUrl(string bundleName)
+        private string GetBundleUrl(string bundleName, string hash)
         {
             string baseUrl = ConfigManager.Instance.ServerConfig.serverUrl;
-            return $"{baseUrl}/updates/bundles/{bundleName}";
+            return AddCacheBuster($"{baseUrl}/updates/bundles/{bundleName}", hash);
+        }
+
+        private static string AddCacheBuster(string url, string value)
+        {
+            string separator = url.Contains("?") ? "&" : "?";
+            return $"{url}{separator}v={value}";
         }
 
         /// <summary>

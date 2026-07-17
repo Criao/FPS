@@ -53,7 +53,11 @@ namespace FPSGame.HotUpdate
         /// </summary>
         public IEnumerator Initialize()
         {
-            string manifestPath = Path.Combine(CachePath, "AssetBundles");
+            string manifestPath = Path.Combine(CachePath, "bundles");
+            if (!File.Exists(manifestPath))
+            {
+                manifestPath = Path.Combine(CachePath, "AssetBundles");
+            }
 
             if (File.Exists(manifestPath))
             {
@@ -69,7 +73,7 @@ namespace FPSGame.HotUpdate
             }
             else
             {
-                Utils.Logger.LogWarning("AssetBundle manifest not found");
+                Utils.Logger.LogWarning("AssetBundle manifest not found. Build and download hot update bundles first.");
             }
         }
 
