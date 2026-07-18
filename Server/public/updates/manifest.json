@@ -1,18 +1,18 @@
 {
-  "version": "1.1.2",
-  "buildNumber": 4,
+  "version": "1.1.4",
+  "buildNumber": 6,
   "forceUpdate": false,
-  "updateDescription": "Hot update manifest cleanup",
+  "updateDescription": "Add hot-update submachine gun pickup",
   "bundles": [
     {
       "name": "bundles",
-      "hash": "4c6143c2da7403f5d1cc3bafdd8dca1c",
-      "size": 1033
+      "hash": "3913fecd7e04c494b616fb6fabdc70d2",
+      "size": 1034
     },
     {
-      "name": "cubes.unity3d",
-      "hash": "268b5585591102f9337fd16143cea825",
-      "size": 33181
+      "name": "submachine_gun.unity3d",
+      "hash": "1ac4f49664181adcff5bd64ffc2f0d9a",
+      "size": 28653
     }
   ]
 }

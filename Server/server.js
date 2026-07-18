@@ -1,5 +1,4 @@
 const express = require('express');
-const bodyParser = require('body-parser');
 const cors = require('cors');
 const mysql = require('mysql2/promise');
 const dbConfig = require('./db-config');
@@ -16,11 +15,9 @@ const PBKDF2_ITERATIONS = readInt('PBKDF2_ITERATIONS', 100000);
 const UPDATE_MANIFEST_PATH = path.join(__dirname, 'public/updates/manifest.json');
 const RESET_REQUEST_MESSAGE = 'If an account exists for that email, a reset code has been sent.';
 
-// Middleware
 app.use(cors());
-app.use(bodyParser.json());
+app.use(express.json());
 
-// 静态文件服务 - 用于提供 AssetBundle 下载
 app.use('/updates', express.static(path.join(__dirname, 'public/updates')));
 
 // Database connection pool

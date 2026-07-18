@@ -6,7 +6,6 @@ TagManager:
   tags:
   - Target
   - Wall
-  - cubes
   layers:
   - Default
   - TransparentFX
@@ -15,31 +14,31 @@ TagManager:
   - Water
   - UI
   - Player
-  - Bullet
-  - 
-  - 
-  - 
-  - 
-  - 
-  - 
-  - 
-  - 
-  - 
-  - 
-  - 
-  - 
-  - 
-  - 
-  - 
-  - 
-  - 
-  - 
-  - 
-  - 
-  - 
-  - 
-  - 
-  - 
+  - ''
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
+  -
   m_SortingLayers:
   - name: Default
     uniqueID: 0

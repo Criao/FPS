@@ -1,6 +1,5 @@
 using System;
 using System.Collections;
-using System.IO;
 using System.Text;
 using UnityEngine;
 using UnityEngine.Networking;
@@ -17,8 +16,6 @@ namespace FPSGame.Network
 
         [SerializeField] private int timeout = 30;
         [SerializeField] private int maxRetries = 3;
-
-        public int MaxRetries => maxRetries;
 
         private void Awake()
         {
@@ -69,55 +66,6 @@ namespace FPSGame.Network
                 "POST",
                 url,
                 callback);
-        }
-
-        public IEnumerator DownloadFile(string url, string savePath, Action<bool, string> callback, Action<float> progressCallback = null)
-        {
-            int attempt = 0;
-            string lastError = string.Empty;
-
-            while (attempt <= maxRetries)
-            {
-                using (UnityWebRequest request = UnityWebRequest.Get(url))
-                {
-                    request.timeout = timeout;
-                    UnityWebRequestAsyncOperation operation = request.SendWebRequest();
-
-                    while (!operation.isDone)
-                    {
-                        progressCallback?.Invoke(operation.progress);
-                        yield return null;
-                    }
-
-                    if (request.result == UnityWebRequest.Result.Success)
-                    {
-                        string directory = Path.GetDirectoryName(savePath);
-                        if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
-                        {
-                            Directory.CreateDirectory(directory);
-                        }
-
-                        File.WriteAllBytes(savePath, request.downloadHandler.data);
-                        callback?.Invoke(true, "Download successful");
-                        yield break;
-                    }
-
-                    lastError = GetErrorMessage(request);
-                    if (ShouldRetry(request) && attempt < maxRetries)
-                    {
-                        attempt++;
-                        Utils.Logger.LogWarning($"File download failed, retrying ({attempt}/{maxRetries}): {url} - {lastError}");
-                        yield return new WaitForSeconds(GetRetryDelay(attempt));
-                        continue;
-                    }
-                }
-
-                Utils.Logger.LogError($"File download failed: {url} - {lastError}");
-                callback?.Invoke(false, lastError);
-                yield break;
-            }
-
-            callback?.Invoke(false, lastError);
         }
 
         private static UnityWebRequest CreateJsonPostRequest(string url, string jsonData, string token = null)

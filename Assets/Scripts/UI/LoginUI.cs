@@ -1,65 +1,140 @@
+using System.Collections;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 using TMPro;
-using FPSGame.Utils;
 using FPSGame.Core;
 
 namespace FPSGame.UI
 {
-    /// <summary>
-    /// 登录界面UI控制器
-    /// </summary>
     public class LoginUI : MonoBehaviour
     {
-        [Header("UI引用")]
+        [Header("UI References")]
         public TMP_InputField usernameInput;
         public TMP_InputField passwordInput;
         public Toggle rememberMeToggle;
-        public GameObject checkmarkImage; // 勾选框图标
+        public GameObject checkmarkImage;
         public Button loginButton;
         public Button guestLoginButton;
         public Button registerButton;
         public Button forgotPasswordButton;
         public TextMeshProUGUI messageText;
 
-        [Header("面板引用")]
+        [Header("Panel References")]
         public GameObject loginPanel;
         public GameObject registerPanel;
         public GameObject forgotPasswordPanel;
 
+        private bool buttonsBound;
+
+        private void OnEnable()
+        {
+            ReleaseCursorForUi();
+        }
+
         private void Start()
         {
-            // 确保LoginManager存在
-            if (Login.LoginManager.Instance == null)
+            ReleaseCursorForUi();
+            EnsureEventSystem();
+            EnsureLoginManager();
+            DisablePanelBackgroundRaycasts();
+
+            if (!ValidateReferences())
             {
-                GameObject loginManagerObj = new GameObject("LoginManager");
-                loginManagerObj.AddComponent<Login.LoginManager>();
-                DontDestroyOnLoad(loginManagerObj);
+                enabled = false;
+                return;
             }
 
-            // 绑定按钮事件
+            BindButtons();
+            InitializeRememberMe();
+            LoadRememberedCredentials();
+            StartCoroutine(TryAutoLogin());
+        }
+
+        private void EnsureLoginManager()
+        {
+            if (Login.LoginManager.Instance != null)
+            {
+                return;
+            }
+
+            GameObject loginManagerObj = new GameObject("LoginManager");
+            loginManagerObj.AddComponent<Login.LoginManager>();
+            DontDestroyOnLoad(loginManagerObj);
+        }
+
+        private bool ValidateReferences()
+        {
+            bool valid =
+                usernameInput != null &&
+                passwordInput != null &&
+                loginButton != null &&
+                guestLoginButton != null &&
+                registerButton != null &&
+                forgotPasswordButton != null &&
+                messageText != null &&
+                loginPanel != null &&
+                registerPanel != null &&
+                forgotPasswordPanel != null;
+
+            if (!valid)
+            {
+                Debug.LogError("LoginUI is missing scene-bound UI references.", this);
+            }
+
+            return valid;
+        }
+
+        private void BindButtons()
+        {
+            if (buttonsBound)
+            {
+                return;
+            }
+
             loginButton.onClick.AddListener(OnLoginButtonClick);
             guestLoginButton.onClick.AddListener(OnGuestLoginButtonClick);
             registerButton.onClick.AddListener(OnRegisterButtonClick);
             forgotPasswordButton.onClick.AddListener(OnForgotPasswordButtonClick);
+            buttonsBound = true;
 
-            // 绑定 Toggle 事件
-            if (rememberMeToggle != null)
-            {
-                // 默认不勾选
-                rememberMeToggle.isOn = false;
-                rememberMeToggle.onValueChanged.AddListener(OnRememberMeToggleChanged);
-                // 初始化勾选框显示状态
-                UpdateCheckmarkVisibility(rememberMeToggle.isOn);
-            }
-
-            // 尝试加载记住的账号密码
-            LoadRememberedCredentials();
-
-            StartCoroutine(TryAutoLogin());
+            Utils.Logger.Log("Login UI buttons bound");
         }
 
-        private System.Collections.IEnumerator TryAutoLogin()
+        private void InitializeRememberMe()
+        {
+            if (rememberMeToggle == null)
+            {
+                return;
+            }
+
+            rememberMeToggle.isOn = false;
+            rememberMeToggle.onValueChanged.AddListener(OnRememberMeToggleChanged);
+            UpdateCheckmarkVisibility(rememberMeToggle.isOn);
+        }
+
+        private void DisablePanelBackgroundRaycasts()
+        {
+            DisableBackgroundRaycast(loginPanel);
+            DisableBackgroundRaycast(registerPanel);
+            DisableBackgroundRaycast(forgotPasswordPanel);
+        }
+
+        private static void DisableBackgroundRaycast(GameObject panel)
+        {
+            if (panel == null)
+            {
+                return;
+            }
+
+            Image background = panel.GetComponent<Image>();
+            if (background != null)
+            {
+                background.raycastTarget = false;
+            }
+        }
+
+        private IEnumerator TryAutoLogin()
         {
             while (GameManager.Instance != null &&
                    GameManager.Instance.CurrentState != GameManager.GameState.Login &&
@@ -68,7 +143,7 @@ namespace FPSGame.UI
                 yield return null;
             }
 
-            yield return Login.LoginManager.Instance.TryAutoLogin((success) =>
+            yield return Login.LoginManager.Instance.TryAutoLogin(success =>
             {
                 if (success)
                 {
@@ -77,7 +152,6 @@ namespace FPSGame.UI
                 }
                 else
                 {
-                    // Auto login failed, stay on login screen
                     Utils.Logger.Log("No saved login, showing login screen");
                 }
             });
@@ -85,17 +159,25 @@ namespace FPSGame.UI
 
         private void LoadRememberedCredentials()
         {
-            string savedUsername = Login.TokenManager.Instance.GetRememberedUsername();
-
-            if (!string.IsNullOrEmpty(savedUsername))
+            if (rememberMeToggle == null)
             {
-                usernameInput.text = savedUsername;
-                rememberMeToggle.isOn = true;
+                return;
             }
+
+            string savedUsername = Login.TokenManager.Instance.GetRememberedUsername();
+            if (string.IsNullOrEmpty(savedUsername))
+            {
+                return;
+            }
+
+            usernameInput.text = savedUsername;
+            rememberMeToggle.isOn = true;
         }
 
         private void OnLoginButtonClick()
         {
+            Utils.Logger.Log("Login button clicked");
+
             string username = usernameInput.text.Trim();
             string password = passwordInput.text;
 
@@ -108,7 +190,7 @@ namespace FPSGame.UI
             loginButton.interactable = false;
             ShowMessage("Logging in...", Color.yellow);
 
-            Login.LoginManager.Instance.AccountLogin(username, password, rememberMeToggle.isOn, (success, message) =>
+            Login.LoginManager.Instance.AccountLogin(username, password, rememberMeToggle != null && rememberMeToggle.isOn, (success, message) =>
             {
                 loginButton.interactable = true;
 
@@ -126,6 +208,8 @@ namespace FPSGame.UI
 
         private void OnGuestLoginButtonClick()
         {
+            Utils.Logger.Log("Guest login button clicked");
+
             guestLoginButton.interactable = false;
             ShowMessage("Guest login...", Color.yellow);
 
@@ -147,12 +231,14 @@ namespace FPSGame.UI
 
         private void OnRegisterButtonClick()
         {
+            Utils.Logger.Log("Register button clicked");
             loginPanel.SetActive(false);
             registerPanel.SetActive(true);
         }
 
         private void OnForgotPasswordButtonClick()
         {
+            Utils.Logger.Log("Forgot password button clicked");
             loginPanel.SetActive(false);
             forgotPasswordPanel.SetActive(true);
         }
@@ -172,6 +258,11 @@ namespace FPSGame.UI
 
         private void ShowMessage(string message, Color color)
         {
+            if (messageText == null)
+            {
+                return;
+            }
+
             messageText.text = message;
             messageText.color = color;
             Utils.Logger.Log($"UI Message: {message}");
@@ -182,6 +273,23 @@ namespace FPSGame.UI
             loginPanel.SetActive(true);
             registerPanel.SetActive(false);
             forgotPasswordPanel.SetActive(false);
+        }
+
+        private static void ReleaseCursorForUi()
+        {
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible = true;
+        }
+
+        private static void EnsureEventSystem()
+        {
+            if (EventSystem.current != null)
+            {
+                return;
+            }
+
+            GameObject eventSystemObject = new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule));
+            DontDestroyOnLoad(eventSystemObject);
         }
     }
 }

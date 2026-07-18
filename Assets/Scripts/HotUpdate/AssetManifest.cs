@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using UnityEngine;
 
 namespace FPSGame.HotUpdate
 {
@@ -15,16 +14,6 @@ namespace FPSGame.HotUpdate
         public bool forceUpdate;
         public string updateDescription;
         public List<AssetBundleInfo> bundles = new List<AssetBundleInfo>();
-
-        public long GetTotalSize()
-        {
-            long total = 0;
-            foreach (var bundle in bundles)
-            {
-                total += bundle.size;
-            }
-            return total;
-        }
     }
 
     /// <summary>
@@ -36,7 +25,5 @@ namespace FPSGame.HotUpdate
         public string name;
         public string hash;
         public long size;
-        public int priority;
-        public List<string> dependencies = new List<string>();
     }
 }

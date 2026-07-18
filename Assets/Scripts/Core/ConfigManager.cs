@@ -110,6 +110,12 @@ namespace FPSGame.Core
 
             string json = JsonHelper.ToJson(AppVersion, true);
             string path = Path.Combine(Application.persistentDataPath, SavedAppVersionFileName);
+            string directory = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
             File.WriteAllText(path, json);
             Utils.Logger.Log($"版本信息已保存: {version}");
         }

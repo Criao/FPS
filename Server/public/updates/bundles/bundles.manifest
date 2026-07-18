@@ -1,7 +1,7 @@
 ManifestFileVersion: 0
-CRC: 400026248
+CRC: 3385031817
 AssetBundleManifest:
   AssetBundleInfos:
     Info_0:
-      Name: cubes
+      Name: submachine_gun
       Dependencies: {}

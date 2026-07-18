@@ -8,56 +8,58 @@ using UnityEngine.Networking;
 
 namespace FPSGame.HotUpdate
 {
-    /// <summary>
-    /// 下载管理器 - 负责下载和校验资源文件
-    /// </summary>
     public class DownloadManager : MonoBehaviour
     {
-        private static DownloadManager _instance;
-        public static DownloadManager Instance
-        {
-            get
-            {
-                if (_instance == null)
-                {
-                    GameObject go = new GameObject("DownloadManager");
-                    _instance = go.AddComponent<DownloadManager>();
-                    DontDestroyOnLoad(go);
-                }
-                return _instance;
-            }
-        }
+        private static DownloadManager instance;
 
-        private Queue<DownloadTask> downloadQueue = new Queue<DownloadTask>();
+        private readonly Queue<DownloadTask> downloadQueue = new Queue<DownloadTask>();
         private DownloadTask currentTask;
-        private bool isDownloading = false;
+        private bool isDownloading;
 
         public int MaxRetryCount = 3;
         public float TimeoutSeconds = 30f;
 
-        private class DownloadTask
+        public static DownloadManager Instance
         {
-            public string url;
-            public string savePath;
-            public string expectedHash;
-            public int retryCount = 0;
-            public Action<bool, string> onComplete;
-            public Action<float> onProgress;
+            get
+            {
+                if (instance == null)
+                {
+                    GameObject go = new GameObject("DownloadManager");
+                    instance = go.AddComponent<DownloadManager>();
+                    DontDestroyOnLoad(go);
+                }
+
+                return instance;
+            }
         }
 
-        /// <summary>
-        /// 添加下载任务到队列
-        /// </summary>
-        public void AddDownload(string url, string savePath, string expectedHash,
-            Action<bool, string> onComplete, Action<float> onProgress = null)
+        private void Awake()
+        {
+            if (instance != null && instance != this)
+            {
+                Destroy(gameObject);
+                return;
+            }
+
+            instance = this;
+            DontDestroyOnLoad(gameObject);
+        }
+
+        public void AddDownload(
+            string url,
+            string savePath,
+            string expectedHash,
+            Action<bool, string> onComplete,
+            Action<float> onProgress = null)
         {
             DownloadTask task = new DownloadTask
             {
-                url = url,
-                savePath = savePath,
-                expectedHash = expectedHash,
-                onComplete = onComplete,
-                onProgress = onProgress
+                Url = url,
+                SavePath = savePath,
+                ExpectedHash = expectedHash,
+                OnComplete = onComplete,
+                OnProgress = onProgress
             };
 
             downloadQueue.Enqueue(task);
@@ -65,6 +67,21 @@ namespace FPSGame.HotUpdate
             if (!isDownloading)
             {
                 StartCoroutine(ProcessDownloadQueue());
+            }
+        }
+
+        public static string CalculateMD5(string filePath)
+        {
+            if (!File.Exists(filePath))
+            {
+                return string.Empty;
+            }
+
+            using (MD5 md5 = MD5.Create())
+            using (FileStream stream = File.OpenRead(filePath))
+            {
+                byte[] hash = md5.ComputeHash(stream);
+                return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
             }
         }
 
@@ -84,111 +101,109 @@ namespace FPSGame.HotUpdate
 
         private IEnumerator DownloadFile(DownloadTask task)
         {
-            // 确保目录存在
-            string directory = Path.GetDirectoryName(task.savePath);
-            if (!Directory.Exists(directory))
+            EnsureDirectoryExists(task.SavePath);
+
+            if (File.Exists(task.SavePath) && HashMatches(CalculateMD5(task.SavePath), task.ExpectedHash))
             {
-                Directory.CreateDirectory(directory);
+                Utils.Logger.Log($"File already exists and verified: {Path.GetFileName(task.SavePath)}");
+                task.OnComplete?.Invoke(true, "File already exists");
+                yield break;
             }
 
-            // 如果文件已存在且哈希匹配，跳过下载
-            if (File.Exists(task.savePath))
+            if (File.Exists(task.SavePath))
             {
-                string existingHash = CalculateMD5(task.savePath);
-                if (HashMatches(existingHash, task.expectedHash))
-                {
-                    Utils.Logger.Log($"File already exists and verified: {Path.GetFileName(task.savePath)}");
-                    task.onComplete?.Invoke(true, "File already exists");
-                    yield break;
-                }
-                else
-                {
-                    // 哈希不匹配，删除旧文件
-                    File.Delete(task.savePath);
-                }
+                File.Delete(task.SavePath);
             }
 
-            string tempPath = task.savePath + ".download";
+            string tempPath = task.SavePath + ".download";
             if (File.Exists(tempPath))
             {
                 File.Delete(tempPath);
             }
 
-            Utils.Logger.Log($"Downloading: {task.url}");
+            Utils.Logger.Log($"Downloading: {task.Url}");
 
-            UnityWebRequest request = UnityWebRequest.Get(task.url);
+            UnityWebRequest request = UnityWebRequest.Get(task.Url);
             request.SetRequestHeader("Cache-Control", "no-cache");
             request.SetRequestHeader("Pragma", "no-cache");
             request.downloadHandler = new DownloadHandlerFile(tempPath);
-            request.timeout = (int)TimeoutSeconds;
+            request.timeout = Mathf.Max(1, Mathf.CeilToInt(TimeoutSeconds));
 
-            var operation = request.SendWebRequest();
-
+            UnityWebRequestAsyncOperation operation = request.SendWebRequest();
             while (!operation.isDone)
             {
-                task.onProgress?.Invoke(request.downloadProgress);
+                task.OnProgress?.Invoke(request.downloadProgress);
                 yield return null;
             }
 
             if (request.result == UnityWebRequest.Result.Success)
             {
-                // 校验文件
-                string fileHash = CalculateMD5(tempPath);
-                long fileSize = File.Exists(tempPath) ? new FileInfo(tempPath).Length : 0;
-                if (HashMatches(fileHash, task.expectedHash))
-                {
-                    if (File.Exists(task.savePath))
-                    {
-                        File.Delete(task.savePath);
-                    }
-
-                    File.Move(tempPath, task.savePath);
-                    Utils.Logger.Log($"Download successful: {Path.GetFileName(task.savePath)}");
-                    task.onComplete?.Invoke(true, "Download successful");
-                }
-                else
-                {
-                    Utils.Logger.LogError($"Hash mismatch: {Path.GetFileName(task.savePath)} expected={task.expectedHash} actual={fileHash} bytes={fileSize}");
-                    if (File.Exists(tempPath))
-                    {
-                        File.Delete(tempPath);
-                    }
-
-                    // 重试
-                    if (task.retryCount < MaxRetryCount)
-                    {
-                        task.retryCount++;
-                        Utils.Logger.Log($"Retrying download ({task.retryCount}/{MaxRetryCount})...");
-                        downloadQueue.Enqueue(task);
-                    }
-                    else
-                    {
-                        task.onComplete?.Invoke(false, "Hash verification failed");
-                    }
-                }
+                CompleteSuccessfulRequest(task, tempPath);
             }
             else
             {
-                Utils.Logger.LogError($"Download failed: {request.error}");
-                if (File.Exists(tempPath))
-                {
-                    File.Delete(tempPath);
-                }
-
-                // 重试
-                if (task.retryCount < MaxRetryCount)
-                {
-                    task.retryCount++;
-                    Utils.Logger.Log($"Retrying download ({task.retryCount}/{MaxRetryCount})...");
-                    downloadQueue.Enqueue(task);
-                }
-                else
-                {
-                    task.onComplete?.Invoke(false, request.error);
-                }
+                CompleteFailedRequest(task, tempPath, request.error);
             }
 
             request.Dispose();
+        }
+
+        private void CompleteSuccessfulRequest(DownloadTask task, string tempPath)
+        {
+            string fileHash = CalculateMD5(tempPath);
+            long fileSize = File.Exists(tempPath) ? new FileInfo(tempPath).Length : 0;
+
+            if (!HashMatches(fileHash, task.ExpectedHash))
+            {
+                Utils.Logger.LogError(
+                    $"Hash mismatch: {Path.GetFileName(task.SavePath)} expected={task.ExpectedHash} actual={fileHash} bytes={fileSize}");
+
+                DeleteIfExists(tempPath);
+                RetryOrFail(task, "Hash verification failed");
+                return;
+            }
+
+            DeleteIfExists(task.SavePath);
+            File.Move(tempPath, task.SavePath);
+            Utils.Logger.Log($"Download successful: {Path.GetFileName(task.SavePath)}");
+            task.OnComplete?.Invoke(true, "Download successful");
+        }
+
+        private void CompleteFailedRequest(DownloadTask task, string tempPath, string error)
+        {
+            Utils.Logger.LogError($"Download failed: {error}");
+            DeleteIfExists(tempPath);
+            RetryOrFail(task, error);
+        }
+
+        private void RetryOrFail(DownloadTask task, string message)
+        {
+            if (task.RetryCount < MaxRetryCount)
+            {
+                task.RetryCount++;
+                Utils.Logger.Log($"Retrying download ({task.RetryCount}/{MaxRetryCount})...");
+                downloadQueue.Enqueue(task);
+                return;
+            }
+
+            task.OnComplete?.Invoke(false, message);
+        }
+
+        private static void EnsureDirectoryExists(string savePath)
+        {
+            string directory = Path.GetDirectoryName(savePath);
+            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+        }
+
+        private static void DeleteIfExists(string path)
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
         }
 
         private static bool HashMatches(string actualHash, string expectedHash)
@@ -196,30 +211,22 @@ namespace FPSGame.HotUpdate
             return string.Equals(actualHash, expectedHash, StringComparison.OrdinalIgnoreCase);
         }
 
-        /// <summary>
-        /// 计算文件的MD5哈希值
-        /// </summary>
-        public static string CalculateMD5(string filePath)
+        private void OnDestroy()
         {
-            if (!File.Exists(filePath))
-                return string.Empty;
-
-            using (var md5 = MD5.Create())
+            if (instance == this)
             {
-                using (var stream = File.OpenRead(filePath))
-                {
-                    byte[] hash = md5.ComputeHash(stream);
-                    return BitConverter.ToString(hash).Replace("-", "").ToLower();
-                }
+                instance = null;
             }
         }
 
-        /// <summary>
-        /// 获取当前下载进度
-        /// </summary>
-        public int GetQueueCount()
+        private sealed class DownloadTask
         {
-            return downloadQueue.Count + (currentTask != null ? 1 : 0);
+            public string Url;
+            public string SavePath;
+            public string ExpectedHash;
+            public int RetryCount;
+            public Action<bool, string> OnComplete;
+            public Action<float> OnProgress;
         }
     }
 }

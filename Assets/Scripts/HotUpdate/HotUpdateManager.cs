@@ -8,15 +8,14 @@ using FPSGame.Utils;
 
 namespace FPSGame.HotUpdate
 {
-    /// <summary>
-    /// 热更新管理器
-    /// </summary>
     public class HotUpdateManager : MonoBehaviour
     {
         public static HotUpdateManager Instance { get; private set; }
 
         public bool HasUpdate { get; private set; }
+        public bool LastCheckSucceeded { get; private set; }
         public bool LastDownloadSucceeded { get; private set; }
+        public string LastErrorMessage { get; private set; }
         public VersionInfo RemoteVersion { get; private set; }
         public VersionInfo LocalVersion { get; private set; }
 
@@ -33,27 +32,26 @@ namespace FPSGame.HotUpdate
             }
         }
 
-        /// <summary>
-        /// 检查更新
-        /// </summary>
         public IEnumerator CheckForUpdates()
         {
-            Utils.Logger.Log("开始检查版本更新");
+            HasUpdate = false;
+            LastCheckSucceeded = false;
+            LastErrorMessage = string.Empty;
+            RemoteVersion = null;
+            Utils.Logger.Log("Checking app version");
 
-            // 读取本地版本
             LocalVersion = new VersionInfo
             {
                 version = ConfigManager.Instance.AppVersion.version,
                 buildNumber = ConfigManager.Instance.AppVersion.buildNumber
             };
 
-            // 请求服务器版本
             string url = $"{ConfigManager.Instance.ServerConfig.serverUrl}/api/version/check";
             url += $"?platform={Application.platform}&currentVersion={LocalVersion.version}";
 
             bool requestComplete = false;
             bool requestSuccess = false;
-            string responseData = "";
+            string responseData = string.Empty;
 
             StartCoroutine(NetworkManager.Instance.Get(url, (success, data) =>
             {
@@ -62,55 +60,53 @@ namespace FPSGame.HotUpdate
                 responseData = data;
             }));
 
-            // 等待请求完成
             yield return new WaitUntil(() => requestComplete);
 
-            if (requestSuccess)
+            if (!requestSuccess)
             {
-                var response = JsonHelper.FromJson<VersionResponse>(responseData);
-                if (response != null && response.success)
-                {
-                    RemoteVersion = response.data;
-                    HasUpdate = CompareVersion(LocalVersion, RemoteVersion);
+                LastErrorMessage = $"Version check failed: {responseData}";
+                Utils.Logger.LogWarning(LastErrorMessage);
+                HasUpdate = false;
+                yield break;
+            }
 
-                    if (HasUpdate)
-                    {
-                        Utils.Logger.Log($"发现新版本: {RemoteVersion.version} (当前: {LocalVersion.version})");
-                    }
-                    else
-                    {
-                        Utils.Logger.Log("已是最新版本");
-                    }
-                }
-                else
-                {
-                    Utils.Logger.LogWarning("版本检查响应格式错误");
-                    HasUpdate = false;
-                }
+            VersionResponse response = JsonHelper.FromJson<VersionResponse>(responseData);
+            if (response == null || !response.success || response.data == null)
+            {
+                LastErrorMessage = "Version check response is invalid";
+                Utils.Logger.LogWarning(LastErrorMessage);
+                HasUpdate = false;
+                yield break;
+            }
+
+            RemoteVersion = response.data;
+            HasUpdate = CompareVersion(LocalVersion, RemoteVersion);
+            LastCheckSucceeded = true;
+
+            if (HasUpdate)
+            {
+                Utils.Logger.Log($"New version found: {RemoteVersion.version} (current: {LocalVersion.version})");
             }
             else
             {
-                Utils.Logger.LogWarning($"版本检查失败，跳过更新: {responseData}");
-                HasUpdate = false;
+                Utils.Logger.Log("Already on latest version");
             }
         }
 
-        /// <summary>
-        /// 下载更新
-        /// </summary>
         public IEnumerator DownloadUpdates(Action<float> onProgress = null)
         {
             LastDownloadSucceeded = false;
+            LastErrorMessage = string.Empty;
 
             if (!HasUpdate || RemoteVersion == null)
             {
-                Utils.Logger.LogWarning("No updates available");
+                LastErrorMessage = "No updates available";
+                Utils.Logger.LogWarning(LastErrorMessage);
                 yield break;
             }
 
             Utils.Logger.Log($"Starting download, size: {RemoteVersion.totalSize / 1024 / 1024}MB");
 
-            // 下载资源清单
             string manifestUrl = AddCacheBuster(RemoteVersion.catalogUrl, RemoteVersion.buildNumber.ToString());
             bool manifestDownloaded = false;
             AssetManifest remoteManifest = null;
@@ -123,50 +119,30 @@ namespace FPSGame.HotUpdate
 
             if (!manifestDownloaded || remoteManifest == null)
             {
-                Utils.Logger.LogError("Failed to download manifest");
+                LastErrorMessage = "Failed to download manifest";
+                Utils.Logger.LogError(LastErrorMessage);
                 yield break;
             }
 
-            // 计算需要下载的文件
-            List<AssetBundleInfo> bundlesToDownload = new List<AssetBundleInfo>();
-            string cachePath = AssetBundleManager.CachePath;
-
-            foreach (var bundleInfo in remoteManifest.bundles)
-            {
-                string localPath = System.IO.Path.Combine(cachePath, bundleInfo.name);
-
-                // 检查本地是否已有且哈希匹配
-                if (System.IO.File.Exists(localPath))
-                {
-                    string localHash = DownloadManager.CalculateMD5(localPath);
-                    if (localHash == bundleInfo.hash)
-                    {
-                        continue; // 跳过已存在且正确的文件
-                    }
-                }
-
-                bundlesToDownload.Add(bundleInfo);
-            }
-
+            List<AssetBundleInfo> bundlesToDownload = GetBundlesToDownload(remoteManifest);
             if (bundlesToDownload.Count == 0)
             {
                 Utils.Logger.Log("All files are up to date");
-                ConfigManager.Instance.SaveAppVersion(RemoteVersion.version, RemoteVersion.buildNumber);
-                LastDownloadSucceeded = true;
+                MarkUpdateInstalled(remoteManifest);
+                onProgress?.Invoke(1f);
                 yield break;
             }
 
             Utils.Logger.Log($"Need to download {bundlesToDownload.Count} files");
 
-            // 下载文件
             int totalFiles = bundlesToDownload.Count;
             int downloadedFiles = 0;
             bool downloadFailed = false;
 
-            foreach (var bundleInfo in bundlesToDownload)
+            foreach (AssetBundleInfo bundleInfo in bundlesToDownload)
             {
                 string bundleUrl = GetBundleUrl(bundleInfo.name, bundleInfo.hash);
-                string savePath = System.IO.Path.Combine(cachePath, bundleInfo.name);
+                string savePath = System.IO.Path.Combine(AssetBundleManager.CachePath, bundleInfo.name);
 
                 bool fileDownloaded = false;
                 bool fileSuccess = false;
@@ -181,18 +157,18 @@ namespace FPSGame.HotUpdate
                         fileSuccess = success;
                         if (!success)
                         {
-                            Utils.Logger.LogError($"Download failed: {bundleInfo.name} - {message}");
+                            LastErrorMessage = $"Download failed: {bundleInfo.name} - {message}";
+                            Utils.Logger.LogError(LastErrorMessage);
                             downloadFailed = true;
                         }
                     },
-                    (progress) =>
+                    progress =>
                     {
                         float totalProgress = (downloadedFiles + progress) / totalFiles;
                         onProgress?.Invoke(totalProgress);
                     }
                 );
 
-                // 等待当前文件下载完成
                 yield return new WaitUntil(() => fileDownloaded);
 
                 if (!fileSuccess)
@@ -206,24 +182,75 @@ namespace FPSGame.HotUpdate
 
             if (downloadFailed)
             {
-                Utils.Logger.LogError("Update download failed");
+                if (string.IsNullOrEmpty(LastErrorMessage))
+                {
+                    LastErrorMessage = "Update download failed";
+                }
+
+                Utils.Logger.LogError(LastErrorMessage);
                 yield break;
             }
 
-            // 更新本地版本号
-            ConfigManager.Instance.SaveAppVersion(RemoteVersion.version, RemoteVersion.buildNumber);
-            LastDownloadSucceeded = true;
+            MarkUpdateInstalled(remoteManifest);
+            onProgress?.Invoke(1f);
             Utils.Logger.Log("Update completed successfully");
         }
 
-        /// <summary>
-        /// 下载资源清单
-        /// </summary>
+        private List<AssetBundleInfo> GetBundlesToDownload(AssetManifest remoteManifest)
+        {
+            List<AssetBundleInfo> bundlesToDownload = new List<AssetBundleInfo>();
+            string cachePath = AssetBundleManager.CachePath;
+
+            foreach (AssetBundleInfo bundleInfo in remoteManifest.bundles)
+            {
+                string localPath = System.IO.Path.Combine(cachePath, bundleInfo.name);
+                if (System.IO.File.Exists(localPath))
+                {
+                    string localHash = DownloadManager.CalculateMD5(localPath);
+                    if (string.Equals(localHash, bundleInfo.hash, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+                }
+
+                bundlesToDownload.Add(bundleInfo);
+            }
+
+            return bundlesToDownload;
+        }
+
+        private void MarkUpdateInstalled(AssetManifest manifest)
+        {
+            string installedVersion = !string.IsNullOrEmpty(manifest.version)
+                ? manifest.version
+                : RemoteVersion.version;
+
+            int installedBuildNumber = manifest.buildNumber > 0
+                ? manifest.buildNumber
+                : RemoteVersion.buildNumber;
+
+            ConfigManager.Instance.SaveAppVersion(installedVersion, installedBuildNumber);
+
+            LocalVersion = new VersionInfo
+            {
+                version = installedVersion,
+                buildNumber = installedBuildNumber,
+                catalogUrl = RemoteVersion.catalogUrl,
+                totalSize = RemoteVersion.totalSize,
+                forceUpdate = RemoteVersion.forceUpdate,
+                updateDescription = RemoteVersion.updateDescription
+            };
+
+            HasUpdate = false;
+            LastDownloadSucceeded = true;
+            LastErrorMessage = string.Empty;
+        }
+
         private IEnumerator DownloadManifest(string url, Action<bool, AssetManifest> onComplete)
         {
             bool requestComplete = false;
             bool requestSuccess = false;
-            string responseData = "";
+            string responseData = string.Empty;
 
             StartCoroutine(NetworkManager.Instance.Get(url, (success, data) =>
             {
@@ -234,29 +261,27 @@ namespace FPSGame.HotUpdate
 
             yield return new WaitUntil(() => requestComplete);
 
-            if (requestSuccess)
+            if (!requestSuccess)
             {
-                try
-                {
-                    AssetManifest manifest = JsonUtility.FromJson<AssetManifest>(responseData);
-                    onComplete?.Invoke(true, manifest);
-                }
-                catch (Exception e)
-                {
-                    Utils.Logger.LogError($"Failed to parse manifest: {e.Message}");
-                    onComplete?.Invoke(false, null);
-                }
+                LastErrorMessage = $"Failed to download manifest: {responseData}";
+                Utils.Logger.LogError(LastErrorMessage);
+                onComplete?.Invoke(false, null);
+                yield break;
             }
-            else
+
+            try
             {
-                Utils.Logger.LogError($"Failed to download manifest: {responseData}");
+                AssetManifest manifest = JsonUtility.FromJson<AssetManifest>(responseData);
+                onComplete?.Invoke(true, manifest);
+            }
+            catch (Exception e)
+            {
+                LastErrorMessage = $"Failed to parse manifest: {e.Message}";
+                Utils.Logger.LogError(LastErrorMessage);
                 onComplete?.Invoke(false, null);
             }
         }
 
-        /// <summary>
-        /// 获取 Bundle 下载地址
-        /// </summary>
         private string GetBundleUrl(string bundleName, string hash)
         {
             string baseUrl = ConfigManager.Instance.ServerConfig.serverUrl;
@@ -269,19 +294,12 @@ namespace FPSGame.HotUpdate
             return $"{url}{separator}v={value}";
         }
 
-        /// <summary>
-        /// 比较版本号
-        /// </summary>
         private bool CompareVersion(VersionInfo local, VersionInfo remote)
         {
-            if (remote == null) return false;
-            return remote.buildNumber > local.buildNumber;
+            return remote != null && remote.buildNumber > local.buildNumber;
         }
     }
 
-    /// <summary>
-    /// 版本信息
-    /// </summary>
     [Serializable]
     public class VersionInfo
     {
@@ -293,9 +311,6 @@ namespace FPSGame.HotUpdate
         public string updateDescription;
     }
 
-    /// <summary>
-    /// 版本检查响应
-    /// </summary>
     [Serializable]
     public class VersionResponse
     {

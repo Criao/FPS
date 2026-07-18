@@ -1,5 +1,8 @@
+using System.Collections;
+using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
+using UnityEngine.Rendering;
 using UnityEngine.UI;
 
 public enum ShootingMode
@@ -8,38 +11,89 @@ public enum ShootingMode
     Auto
 }
 
+public enum WeaponSlot
+{
+    Primary = 1,
+    Secondary = 2
+}
+
 public class Weapon : MonoBehaviour
 {
+    private const string FirstPersonWeaponModelName = "FirstPersonGunModel";
+    private const string MuzzleName = "Muzzle";
+    private const int InitialShotTracerPoolSize = 16;
+    private const int MaxShotTracerPoolSize = 48;
+    private const int DefaultPrimaryMagazineSize = 25;
+    private const int DefaultPrimaryTotalMagazines = 3;
+    private const int DefaultSecondaryMagazineSize = 7;
+    private const int DefaultSecondaryTotalMagazines = 3;
+    private const float DefaultPrimaryReloadSeconds = 3.5f;
+    private const float DefaultSecondaryReloadSeconds = 2f;
+    private static readonly Vector3 EquippedModelLocalPosition = new Vector3(0.34f, -0.32f, 0.68f);
+    private static readonly Vector3 EquippedModelLocalEulerAngles = new Vector3(-2f, -3f, 0f);
+
     [Header("References")]
     public Camera playerCamera;
+    [SerializeField] private Transform bulletSpawnPoint;
+
+    [Header("Weapon Slots")]
+    [SerializeField] private KeyCode primarySlotKey = KeyCode.Alpha1;
+    [SerializeField] private KeyCode secondarySlotKey = KeyCode.Alpha2;
+    [SerializeField] private int primaryMagazineSize = DefaultPrimaryMagazineSize;
+    [SerializeField] private int primaryTotalMagazines = DefaultPrimaryTotalMagazines;
+    [SerializeField] private int secondaryMagazineSize = DefaultSecondaryMagazineSize;
+    [SerializeField] private int secondaryTotalMagazines = DefaultSecondaryTotalMagazines;
+    [SerializeField] private float primaryReloadSeconds = DefaultPrimaryReloadSeconds;
+    [SerializeField] private float secondaryReloadSeconds = DefaultSecondaryReloadSeconds;
 
     [Header("Shooting Mode")]
     public ShootingMode currentShootingMode = ShootingMode.Single;
     [SerializeField] private KeyCode switchModeKey = KeyCode.B;
+    [SerializeField] private bool primaryAllowsAuto = true;
 
-    [Header("Optional Visual Projectile")]
-    [SerializeField] private bool spawnVisualProjectile;
-    [SerializeField] private GameObject bulletPrefab;
-    [SerializeField] private Transform bulletSpawnPoint;
-    [SerializeField] private float bulletSpeed = 30f;
-    [SerializeField] private float bulletLifetime = 3f;
+    [Header("Shot Feedback")]
+    [SerializeField] private bool showShotTracer = true;
+    [SerializeField] private Material shotTracerMaterial;
+    [SerializeField] private float tracerDuration = 0.06f;
+    [SerializeField] private float tracerStartWidth = 0.035f;
+    [SerializeField] private float tracerEndWidth = 0.005f;
+    [SerializeField] private Color tracerStartColor = new Color(1f, 0.92f, 0.25f, 1f);
+    [SerializeField] private Color tracerEndColor = new Color(1f, 0.35f, 0.05f, 0f);
+
+    [Header("Audio")]
+    [SerializeField] private AudioClip shotSound;
+    [SerializeField] private AudioClip autoFireSound;
+    [SerializeField] private AudioClip reloadSound;
+    [SerializeField] private AudioSource shotAudioSource;
+    [SerializeField] private AudioSource autoFireAudioSource;
+    [SerializeField] private AudioSource reloadAudioSource;
+    [SerializeField, Range(0f, 1f)] private float shotVolume = 0.85f;
+    [SerializeField, Range(0f, 1f)] private float autoFireVolume = 0.78f;
+    [SerializeField, Range(0f, 1f)] private float reloadVolume = 0.75f;
+    [SerializeField] private Vector2 shotPitchRange = new Vector2(0.96f, 1.04f);
 
     [Header("Ammo")]
-    [SerializeField] private int magazineSize = 25;
-    [SerializeField] private int totalMagazines = 3;
     [SerializeField] private KeyCode reloadKey = KeyCode.R;
 
     [Header("Hitscan")]
     [SerializeField] private float damage = 25f;
     [SerializeField] private float raycastDistance = 300f;
     [SerializeField] private LayerMask hitLayers = ~0;
-    [SerializeField] private float autoEmptyMagazineSeconds = 8f;
+    [SerializeField] private bool ignoreOwnColliders = true;
+    [SerializeField] private Transform ignoredHitRoot;
+    [SerializeField] private bool excludePlayerLayerFromHits = true;
+    [SerializeField] private float autoEmptyMagazineSeconds = 6f;
     [SerializeField] private float spreadIntensity;
 
     [Header("Impact")]
     [SerializeField] private GameObject bulletHolePrefab;
+    [SerializeField] private bool useRoundBulletHoles = true;
     [SerializeField] private float bulletHoleSize = 0.1f;
+    [SerializeField] private float minRoundBulletHoleSize = 0.035f;
+    [SerializeField] private float maxRoundBulletHoleSize = 0.12f;
+    [SerializeField] private float bulletHoleSurfaceOffset = 0.015f;
     [SerializeField] private float bulletHoleLifetime = 10f;
+    [SerializeField] private float hitImpulse = 16f;
 
     [Header("UI")]
     [SerializeField] private TextMeshProUGUI ammoText;
@@ -48,24 +102,33 @@ public class Weapon : MonoBehaviour
     [SerializeField] private Vector2 ammoUiOffset = new Vector2(-32f, 32f);
     [SerializeField] private int ammoFontSize = 28;
 
-    private int currentAmmo;
-    private int reserveAmmo;
+    private WeaponRuntimeState primaryWeapon;
+    private WeaponRuntimeState secondaryWeapon;
+    private WeaponRuntimeState activeWeapon;
+    private WeaponSlot activeSlot = WeaponSlot.Secondary;
     private float nextAutoShotTime;
+    private readonly RaycastHit[] raycastHitBuffer = new RaycastHit[32];
+    private static Material fallbackTracerMaterial;
+    private static Material fallbackBulletHoleMaterial;
+    private static Transform shotTracerPoolRoot;
+    private static int nextShotTracerReuseIndex;
+    private static readonly List<PooledShotTracer> shotTracerPool = new List<PooledShotTracer>(MaxShotTracerPoolSize);
 
-    public int CurrentAmmo => currentAmmo;
-    public int TotalAmmo => currentAmmo + reserveAmmo;
-    public int RemainingMagazineCount => magazineSize <= 0 ? 0 : Mathf.CeilToInt((float)TotalAmmo / magazineSize);
+    public int CurrentAmmo => activeWeapon != null ? activeWeapon.CurrentAmmo : 0;
+    public int TotalAmmo => activeWeapon != null ? activeWeapon.TotalAmmo : 0;
+    public int RemainingMagazineCount => activeWeapon != null ? activeWeapon.RemainingMagazineCount : 0;
 
     private float AutoFireInterval
     {
         get
         {
-            if (magazineSize <= 1)
+            int activeMagazineSize = activeWeapon != null ? activeWeapon.MagazineSize : 1;
+            if (activeMagazineSize <= 1)
             {
                 return 0.01f;
             }
 
-            return Mathf.Max(0.01f, autoEmptyMagazineSeconds / (magazineSize - 1));
+            return Mathf.Max(0.01f, autoEmptyMagazineSeconds / (activeMagazineSize - 1));
         }
     }
 
@@ -76,23 +139,90 @@ public class Weapon : MonoBehaviour
             playerCamera = Camera.main;
         }
 
-        magazineSize = Mathf.Max(1, magazineSize);
-        totalMagazines = Mathf.Max(1, totalMagazines);
+        ApplyFixedWeaponSettings();
         autoEmptyMagazineSeconds = Mathf.Max(0.01f, autoEmptyMagazineSeconds);
         raycastDistance = Mathf.Max(1f, raycastDistance);
+        ignoredHitRoot = ignoredHitRoot != null ? ignoredHitRoot : ResolveIgnoredHitRoot();
+        EnsureWeaponAudioSources();
+        InitializeWeaponSlots();
 
-        currentAmmo = magazineSize;
-        reserveAmmo = (totalMagazines - 1) * magazineSize;
+        if (useRoundBulletHoles)
+        {
+            BulletHoleDecal.Prewarm();
+        }
+
+        if (showShotTracer)
+        {
+            PrewarmShotTracers();
+        }
 
         EnsureAmmoUI();
         UpdateAmmoUI();
     }
 
+    private void ApplyFixedWeaponSettings()
+    {
+        primaryMagazineSize = DefaultPrimaryMagazineSize;
+        primaryTotalMagazines = DefaultPrimaryTotalMagazines;
+        primaryReloadSeconds = DefaultPrimaryReloadSeconds;
+
+        secondaryMagazineSize = DefaultSecondaryMagazineSize;
+        secondaryTotalMagazines = DefaultSecondaryTotalMagazines;
+        secondaryReloadSeconds = DefaultSecondaryReloadSeconds;
+    }
+
     private void Update()
     {
+        HandleWeaponSlotSwitch();
         HandleModeSwitch();
         HandleReload();
         HandleShooting();
+    }
+
+    private void InitializeWeaponSlots()
+    {
+        Transform modelParent = playerCamera != null ? playerCamera.transform : transform;
+        Transform secondaryModel = modelParent != null ? modelParent.Find(FirstPersonWeaponModelName) : null;
+        Transform secondaryMuzzle = bulletSpawnPoint != null
+            ? bulletSpawnPoint
+            : FindChildRecursive(secondaryModel, MuzzleName);
+
+        primaryWeapon = new WeaponRuntimeState(
+            WeaponSlot.Primary,
+            "SMG",
+            primaryMagazineSize,
+            primaryTotalMagazines,
+            primaryReloadSeconds,
+            primaryAllowsAuto);
+
+        secondaryWeapon = new WeaponRuntimeState(
+            WeaponSlot.Secondary,
+            "PISTOL",
+            secondaryMagazineSize,
+            secondaryTotalMagazines,
+            secondaryReloadSeconds,
+            false)
+        {
+            IsUnlocked = true,
+            Model = secondaryModel,
+            Muzzle = secondaryMuzzle
+        };
+
+        TryEquipWeaponSlot(WeaponSlot.Secondary, false);
+        Debug.Log($"Weapon slots initialized. Pistol ammo: {secondaryWeapon.CurrentAmmo}, reserve: {secondaryWeapon.ReserveAmmo}. SMG ammo: {primaryWeapon.CurrentAmmo}, reserve: {primaryWeapon.ReserveAmmo}.");
+    }
+
+    private void HandleWeaponSlotSwitch()
+    {
+        if (Input.GetKeyDown(primarySlotKey))
+        {
+            TryEquipWeaponSlot(WeaponSlot.Primary, true);
+        }
+
+        if (Input.GetKeyDown(secondarySlotKey))
+        {
+            TryEquipWeaponSlot(WeaponSlot.Secondary, true);
+        }
     }
 
     private void HandleModeSwitch()
@@ -102,9 +232,24 @@ public class Weapon : MonoBehaviour
             return;
         }
 
-        currentShootingMode = currentShootingMode == ShootingMode.Single
+        if (activeWeapon == null)
+        {
+            return;
+        }
+
+        if (!activeWeapon.AllowsAuto)
+        {
+            activeWeapon.ShootingMode = ShootingMode.Single;
+            currentShootingMode = ShootingMode.Single;
+            Debug.Log("Current weapon only supports single fire.");
+            UpdateAmmoUI();
+            return;
+        }
+
+        activeWeapon.ShootingMode = activeWeapon.ShootingMode == ShootingMode.Single
             ? ShootingMode.Auto
             : ShootingMode.Single;
+        currentShootingMode = activeWeapon.ShootingMode;
 
         Debug.Log("Switched shooting mode: " + GetModeLabel());
         UpdateAmmoUI();
@@ -120,7 +265,12 @@ public class Weapon : MonoBehaviour
 
     private void HandleShooting()
     {
-        switch (currentShootingMode)
+        if (activeWeapon == null)
+        {
+            return;
+        }
+
+        switch (activeWeapon.ShootingMode)
         {
             case ShootingMode.Single:
                 if (Input.GetButtonDown("Fire1"))
@@ -130,7 +280,7 @@ public class Weapon : MonoBehaviour
                 break;
 
             case ShootingMode.Auto:
-                if (Input.GetButton("Fire1") && Time.time >= nextAutoShotTime)
+                if (activeWeapon.AllowsAuto && Input.GetButton("Fire1") && Time.time >= nextAutoShotTime)
                 {
                     TryShoot();
                     nextAutoShotTime = Time.time + AutoFireInterval;
@@ -141,7 +291,17 @@ public class Weapon : MonoBehaviour
 
     private bool TryShoot()
     {
-        if (currentAmmo <= 0)
+        if (activeWeapon == null)
+        {
+            return false;
+        }
+
+        if (activeWeapon.IsReloading)
+        {
+            return false;
+        }
+
+        if (activeWeapon.CurrentAmmo <= 0)
         {
             if (!TryReload())
             {
@@ -152,8 +312,15 @@ public class Weapon : MonoBehaviour
             return false;
         }
 
-        currentAmmo--;
+        activeWeapon.CurrentAmmo--;
+        PlayShotSound();
         FireHitscan();
+
+        if (activeWeapon.CurrentAmmo <= 0 && activeWeapon.ReserveAmmo > 0)
+        {
+            TryReload();
+        }
+
         UpdateAmmoUI();
 
         return true;
@@ -161,32 +328,267 @@ public class Weapon : MonoBehaviour
 
     private bool TryReload()
     {
-        if (currentAmmo >= magazineSize || reserveAmmo <= 0)
+        return TryStartReload(activeWeapon);
+    }
+
+    private bool TryStartReload(WeaponRuntimeState weaponState)
+    {
+        if (weaponState == null ||
+            weaponState.IsReloading ||
+            weaponState.CurrentAmmo >= weaponState.MagazineSize ||
+            weaponState.ReserveAmmo <= 0)
         {
             UpdateAmmoUI();
             return false;
         }
 
-        int neededAmmo = magazineSize - currentAmmo;
-        int loadedAmmo = Mathf.Min(neededAmmo, reserveAmmo);
+        weaponState.IsReloading = true;
+        PlayReloadSound(weaponState);
+        UpdateAmmoUI();
+        StartCoroutine(ReloadAfterDelay(weaponState));
+        return true;
+    }
 
-        currentAmmo += loadedAmmo;
-        reserveAmmo -= loadedAmmo;
+    private IEnumerator ReloadAfterDelay(WeaponRuntimeState weaponState)
+    {
+        yield return new WaitForSeconds(weaponState.ReloadSeconds);
 
+        int neededAmmo = weaponState.MagazineSize - weaponState.CurrentAmmo;
+        int loadedAmmo = Mathf.Min(neededAmmo, weaponState.ReserveAmmo);
+
+        weaponState.CurrentAmmo += loadedAmmo;
+        weaponState.ReserveAmmo -= loadedAmmo;
+        weaponState.IsReloading = false;
+        UpdateAmmoUI();
+    }
+
+    public void PickupPrimaryWeaponModel(GameObject hotUpdateModel, Transform muzzle)
+    {
+        if (hotUpdateModel == null)
+        {
+            return;
+        }
+
+        Transform modelParent = playerCamera != null ? playerCamera.transform : transform;
+        if (primaryWeapon == null)
+        {
+            primaryWeapon = new WeaponRuntimeState(
+                WeaponSlot.Primary,
+                "SMG",
+                primaryMagazineSize,
+                primaryTotalMagazines,
+                primaryReloadSeconds,
+                primaryAllowsAuto);
+        }
+
+        if (primaryWeapon.Model != null && primaryWeapon.Model.gameObject != hotUpdateModel)
+        {
+            Destroy(primaryWeapon.Model.gameObject);
+        }
+
+        hotUpdateModel.transform.SetParent(modelParent, false);
+        hotUpdateModel.transform.localPosition = EquippedModelLocalPosition;
+        hotUpdateModel.transform.localRotation = Quaternion.Euler(EquippedModelLocalEulerAngles);
+        hotUpdateModel.transform.localScale = Vector3.one;
+
+        SetLayerRecursive(hotUpdateModel.transform, GetPlayerLayerOrCurrent(gameObject.layer));
+
+        Transform muzzleTransform = muzzle != null ? muzzle : FindChildRecursive(hotUpdateModel.transform, MuzzleName);
+        primaryWeapon.Model = hotUpdateModel.transform;
+        primaryWeapon.Muzzle = muzzleTransform;
+        primaryWeapon.IsUnlocked = true;
+        primaryWeapon.ShootingMode = ShootingMode.Single;
+        primaryWeapon.ConfigureAmmo(primaryMagazineSize, primaryTotalMagazines);
+
+        TryEquipWeaponSlot(WeaponSlot.Primary, true);
+    }
+
+    private bool TryEquipWeaponSlot(WeaponSlot targetSlot, bool logIfUnavailable)
+    {
+        WeaponRuntimeState targetWeapon = GetWeaponState(targetSlot);
+        if (targetWeapon == null || !targetWeapon.IsUnlocked)
+        {
+            if (logIfUnavailable)
+            {
+                Debug.Log(targetSlot == WeaponSlot.Primary
+                    ? "Primary weapon slot is empty."
+                    : "Secondary weapon slot is empty.");
+            }
+
+            UpdateAmmoUI();
+            return false;
+        }
+
+        activeSlot = targetSlot;
+        activeWeapon = targetWeapon;
+        ApplyActiveWeapon();
         UpdateAmmoUI();
         return true;
+    }
+
+    private WeaponRuntimeState GetWeaponState(WeaponSlot slot)
+    {
+        return slot == WeaponSlot.Primary ? primaryWeapon : secondaryWeapon;
+    }
+
+    private void ApplyActiveWeapon()
+    {
+        SetWeaponModelActive(primaryWeapon, activeWeapon == primaryWeapon);
+        SetWeaponModelActive(secondaryWeapon, activeWeapon == secondaryWeapon);
+
+        if (activeWeapon == null)
+        {
+            bulletSpawnPoint = null;
+            currentShootingMode = ShootingMode.Single;
+            return;
+        }
+
+        if (!activeWeapon.AllowsAuto)
+        {
+            activeWeapon.ShootingMode = ShootingMode.Single;
+        }
+
+        bulletSpawnPoint = activeWeapon.Muzzle;
+        currentShootingMode = activeWeapon.ShootingMode;
+        nextAutoShotTime = 0f;
+    }
+
+    private static void SetWeaponModelActive(WeaponRuntimeState weaponState, bool isActive)
+    {
+        if (weaponState != null && weaponState.Model != null)
+        {
+            weaponState.Model.gameObject.SetActive(isActive);
+        }
+    }
+
+    private sealed class WeaponRuntimeState
+    {
+        public WeaponRuntimeState(
+            WeaponSlot slot,
+            string displayName,
+            int magazineSize,
+            int totalMagazines,
+            float reloadSeconds,
+            bool allowsAuto)
+        {
+            Slot = slot;
+            DisplayName = displayName;
+            AllowsAuto = allowsAuto;
+            ReloadSeconds = Mathf.Max(0.01f, reloadSeconds);
+            ShootingMode = ShootingMode.Single;
+            ConfigureAmmo(magazineSize, totalMagazines);
+        }
+
+        public WeaponSlot Slot { get; }
+        public string DisplayName { get; }
+        public bool AllowsAuto { get; }
+        public bool IsUnlocked { get; set; }
+        public Transform Model { get; set; }
+        public Transform Muzzle { get; set; }
+        public int MagazineSize { get; private set; }
+        public int CurrentAmmo { get; set; }
+        public int ReserveAmmo { get; set; }
+        public float ReloadSeconds { get; }
+        public bool IsReloading { get; set; }
+        public ShootingMode ShootingMode { get; set; }
+        public int TotalAmmo => CurrentAmmo + ReserveAmmo;
+        public int RemainingMagazineCount => MagazineSize <= 0 ? 0 : Mathf.CeilToInt((float)TotalAmmo / MagazineSize);
+
+        public void ConfigureAmmo(int magazineSize, int totalMagazines)
+        {
+            MagazineSize = Mathf.Max(1, magazineSize);
+            int safeTotalMagazines = Mathf.Max(1, totalMagazines);
+            CurrentAmmo = MagazineSize;
+            ReserveAmmo = (safeTotalMagazines - 1) * MagazineSize;
+            IsReloading = false;
+        }
+    }
+
+    private void EnsureWeaponAudioSources()
+    {
+        Transform audioParent = playerCamera != null ? playerCamera.transform : transform;
+        shotAudioSource = EnsureAudioSource(shotAudioSource, audioParent, "Single Shot Audio");
+        autoFireAudioSource = EnsureAudioSource(autoFireAudioSource, audioParent, "Auto Fire Audio");
+        reloadAudioSource = EnsureAudioSource(reloadAudioSource, audioParent, "Reload Audio");
+    }
+
+    private static AudioSource EnsureAudioSource(AudioSource source, Transform parent, string objectName)
+    {
+        if (source == null && parent != null)
+        {
+            Transform existing = parent.Find(objectName);
+            if (existing != null)
+            {
+                source = existing.GetComponent<AudioSource>();
+            }
+        }
+
+        if (source == null)
+        {
+            GameObject audioObject = new GameObject(objectName);
+            audioObject.transform.SetParent(parent, false);
+            audioObject.transform.localPosition = new Vector3(0.34f, -0.32f, 0.68f);
+            audioObject.transform.localRotation = Quaternion.identity;
+            audioObject.transform.localScale = Vector3.one;
+            source = audioObject.AddComponent<AudioSource>();
+        }
+
+        source.playOnAwake = false;
+        source.loop = false;
+        source.spatialBlend = 0f;
+        source.volume = 1f;
+        return source;
+    }
+
+    private void PlayShotSound()
+    {
+        EnsureWeaponAudioSources();
+
+        bool useAutoSound = activeWeapon != null &&
+                            activeWeapon.AllowsAuto &&
+                            activeWeapon.ShootingMode == ShootingMode.Auto &&
+                            autoFireSound != null;
+
+        AudioSource targetSource = useAutoSound ? autoFireAudioSource : shotAudioSource;
+        AudioClip targetClip = useAutoSound ? autoFireSound : shotSound;
+        float targetVolume = useAutoSound ? autoFireVolume : shotVolume;
+
+        if (targetSource == null || targetClip == null)
+        {
+            return;
+        }
+
+        float minPitch = Mathf.Min(shotPitchRange.x, shotPitchRange.y);
+        float maxPitch = Mathf.Max(shotPitchRange.x, shotPitchRange.y);
+        targetSource.pitch = Random.Range(minPitch, maxPitch);
+        targetSource.PlayOneShot(targetClip, targetVolume);
+    }
+
+    private void PlayReloadSound(WeaponRuntimeState weaponState)
+    {
+        EnsureWeaponAudioSources();
+
+        if (reloadAudioSource == null || reloadSound == null)
+        {
+            return;
+        }
+
+        reloadAudioSource.Stop();
+        reloadAudioSource.pitch = weaponState != null && weaponState.Slot == WeaponSlot.Primary ? 0.92f : 1.04f;
+        reloadAudioSource.PlayOneShot(reloadSound, reloadVolume);
     }
 
     private void FireHitscan()
     {
         Ray aimRay = GetAimRay();
         Vector3 targetPoint = aimRay.origin + aimRay.direction * raycastDistance;
+        Vector3 shotOrigin = GetShotOrigin(aimRay);
 
-        if (Physics.Raycast(aimRay, out RaycastHit hit, raycastDistance, hitLayers, QueryTriggerInteraction.Ignore))
+        if (TryGetShootHit(aimRay, out RaycastHit hit))
         {
             targetPoint = hit.point;
-            hit.collider.SendMessageUpwards("TakeDamage", damage, SendMessageOptions.DontRequireReceiver);
             CreateBulletHole(hit);
+            ApplyHitResponse(hit, aimRay.direction);
 
             if (hit.collider.CompareTag("Target"))
             {
@@ -194,7 +596,131 @@ public class Weapon : MonoBehaviour
             }
         }
 
-        SpawnOptionalVisualProjectile(targetPoint);
+        SpawnShotVisual(shotOrigin, targetPoint);
+    }
+
+    private bool TryGetShootHit(Ray aimRay, out RaycastHit closestHit)
+    {
+        closestHit = default;
+        float closestDistance = float.MaxValue;
+        int hitCount = Physics.RaycastNonAlloc(
+            aimRay,
+            raycastHitBuffer,
+            raycastDistance,
+            GetEffectiveHitMask(),
+            QueryTriggerInteraction.Ignore);
+
+        for (int i = 0; i < hitCount; i++)
+        {
+            RaycastHit candidate = raycastHitBuffer[i];
+            if (candidate.collider == null || IsIgnoredHit(candidate.collider))
+            {
+                continue;
+            }
+
+            if (candidate.distance < closestDistance)
+            {
+                closestDistance = candidate.distance;
+                closestHit = candidate;
+            }
+        }
+
+        return closestDistance < float.MaxValue;
+    }
+
+    private int GetEffectiveHitMask()
+    {
+        int mask = hitLayers.value;
+        if (!excludePlayerLayerFromHits)
+        {
+            return mask;
+        }
+
+        int playerLayer = LayerMask.NameToLayer("Player");
+        if (playerLayer >= 0)
+        {
+            mask &= ~(1 << playerLayer);
+        }
+
+        return mask;
+    }
+
+    private bool IsIgnoredHit(Collider hitCollider)
+    {
+        if (!ignoreOwnColliders || hitCollider == null)
+        {
+            return false;
+        }
+
+        Transform rootToIgnore = ignoredHitRoot != null ? ignoredHitRoot : ResolveIgnoredHitRoot();
+        if (IsSameOrChild(hitCollider.transform, transform) ||
+            IsSameOrChild(hitCollider.transform, rootToIgnore))
+        {
+            return true;
+        }
+
+        return hitCollider.attachedRigidbody != null &&
+            IsSameOrChild(hitCollider.attachedRigidbody.transform, rootToIgnore);
+    }
+
+    private Transform ResolveIgnoredHitRoot()
+    {
+        if (playerCamera != null)
+        {
+            return playerCamera.transform.root;
+        }
+
+        return transform.root != null ? transform.root : transform;
+    }
+
+    private static bool IsSameOrChild(Transform candidate, Transform possibleParent)
+    {
+        return candidate != null && possibleParent != null &&
+            (candidate == possibleParent || candidate.IsChildOf(possibleParent));
+    }
+
+    private void ApplyHitResponse(RaycastHit hit, Vector3 shotDirection)
+    {
+        ShootableTarget shootableTarget = hit.collider.GetComponentInParent<ShootableTarget>();
+        if (shootableTarget == null && IsTarget(hit.collider))
+        {
+            GameObject targetObject = hit.rigidbody != null
+                ? hit.rigidbody.gameObject
+                : hit.collider.gameObject;
+
+            shootableTarget = targetObject.AddComponent<ShootableTarget>();
+        }
+
+        if (shootableTarget != null)
+        {
+            shootableTarget.TakeHit(damage, hit.point, shotDirection, hitImpulse);
+            return;
+        }
+
+        hit.collider.SendMessageUpwards("TakeDamage", damage, SendMessageOptions.DontRequireReceiver);
+        ApplyPhysicsImpulse(hit, shotDirection, hitImpulse);
+    }
+
+    private static bool IsTarget(Collider targetCollider)
+    {
+        if (targetCollider.CompareTag("Target"))
+        {
+            return true;
+        }
+
+        return targetCollider.attachedRigidbody != null &&
+            targetCollider.attachedRigidbody.CompareTag("Target");
+    }
+
+    private static void ApplyPhysicsImpulse(RaycastHit hit, Vector3 shotDirection, float impulse)
+    {
+        if (hit.rigidbody == null || impulse <= 0f)
+        {
+            return;
+        }
+
+        hit.rigidbody.WakeUp();
+        hit.rigidbody.AddForceAtPosition(shotDirection.normalized * impulse, hit.point, ForceMode.Impulse);
     }
 
     private Ray GetAimRay()
@@ -220,52 +746,339 @@ public class Weapon : MonoBehaviour
         return new Ray(origin, direction.normalized);
     }
 
-    private void SpawnOptionalVisualProjectile(Vector3 targetPoint)
+    private Vector3 GetShotOrigin(Ray aimRay)
     {
-        if (!spawnVisualProjectile || bulletPrefab == null || bulletSpawnPoint == null)
+        if (bulletSpawnPoint != null)
+        {
+            return bulletSpawnPoint.position;
+        }
+
+        return aimRay.origin + aimRay.direction * 0.35f;
+    }
+
+    private void SpawnShotVisual(Vector3 shotOrigin, Vector3 targetPoint)
+    {
+        if (showShotTracer)
+        {
+            SpawnShotTracer(shotOrigin, targetPoint);
+        }
+    }
+
+    private void SpawnShotTracer(Vector3 startPoint, Vector3 endPoint)
+    {
+        if ((endPoint - startPoint).sqrMagnitude <= 0.0001f)
         {
             return;
         }
 
-        Vector3 direction = (targetPoint - bulletSpawnPoint.position).normalized;
-        if (direction.sqrMagnitude <= 0.0001f)
+        PooledShotTracer tracer = GetPooledShotTracer();
+        tracer.Show(
+            startPoint,
+            endPoint,
+            Mathf.Max(0.001f, tracerStartWidth),
+            Mathf.Max(0.001f, tracerEndWidth),
+            shotTracerMaterial != null ? shotTracerMaterial : GetFallbackTracerMaterial(),
+            tracerStartColor,
+            tracerEndColor,
+            Mathf.Max(0.01f, tracerDuration),
+            shotTracerPoolRoot);
+    }
+
+    private static void PrewarmShotTracers()
+    {
+        EnsureShotTracerPoolRoot();
+
+        while (shotTracerPool.Count < InitialShotTracerPoolSize)
         {
-            direction = bulletSpawnPoint.forward;
+            CreatePooledShotTracer();
+        }
+    }
+
+    private static PooledShotTracer GetPooledShotTracer()
+    {
+        EnsureShotTracerPoolRoot();
+
+        for (int i = 0; i < shotTracerPool.Count; i++)
+        {
+            PooledShotTracer candidate = shotTracerPool[i];
+            if (candidate != null && !candidate.gameObject.activeSelf)
+            {
+                return candidate;
+            }
         }
 
-        GameObject bullet = Instantiate(
-            bulletPrefab,
-            bulletSpawnPoint.position,
-            Quaternion.LookRotation(direction));
-
-        Rigidbody rb = bullet.GetComponent<Rigidbody>();
-        if (rb != null)
+        if (shotTracerPool.Count < MaxShotTracerPoolSize)
         {
-            rb.velocity = direction * bulletSpeed;
+            return CreatePooledShotTracer();
         }
 
-        Destroy(bullet, bulletLifetime);
+        PooledShotTracer reused = shotTracerPool[nextShotTracerReuseIndex % shotTracerPool.Count];
+        nextShotTracerReuseIndex++;
+        return reused;
+    }
+
+    private static void EnsureShotTracerPoolRoot()
+    {
+        if (shotTracerPoolRoot != null)
+        {
+            return;
+        }
+
+        GameObject root = new GameObject("Shot Tracer Pool");
+        root.hideFlags = HideFlags.HideInHierarchy;
+        DontDestroyOnLoad(root);
+        shotTracerPoolRoot = root.transform;
+    }
+
+    private static PooledShotTracer CreatePooledShotTracer()
+    {
+        GameObject tracerObject = new GameObject("Shot Tracer");
+        tracerObject.hideFlags = HideFlags.HideInHierarchy;
+        tracerObject.transform.SetParent(shotTracerPoolRoot, false);
+
+        LineRenderer lineRenderer = tracerObject.AddComponent<LineRenderer>();
+        lineRenderer.useWorldSpace = true;
+        lineRenderer.positionCount = 0;
+        lineRenderer.numCapVertices = 2;
+        lineRenderer.alignment = LineAlignment.View;
+
+        PooledShotTracer tracer = tracerObject.AddComponent<PooledShotTracer>();
+        tracer.Initialize(lineRenderer, shotTracerPoolRoot);
+        tracerObject.SetActive(false);
+        shotTracerPool.Add(tracer);
+
+        return tracer;
+    }
+
+    private sealed class PooledShotTracer : MonoBehaviour
+    {
+        private LineRenderer lineRenderer;
+        private Transform poolRoot;
+        private float releaseTime;
+
+        public void Initialize(LineRenderer targetLineRenderer, Transform targetPoolRoot)
+        {
+            lineRenderer = targetLineRenderer;
+            poolRoot = targetPoolRoot;
+        }
+
+        public void Show(Vector3 startPoint, Vector3 endPoint, float startWidth, float endWidth, Material material, Color startColor, Color endColor, float duration, Transform targetPoolRoot)
+        {
+            poolRoot = targetPoolRoot;
+            releaseTime = Time.time + duration;
+
+            if (lineRenderer == null)
+            {
+                lineRenderer = GetComponent<LineRenderer>();
+            }
+
+            gameObject.SetActive(true);
+            transform.SetParent(poolRoot, false);
+
+            lineRenderer.positionCount = 2;
+            lineRenderer.SetPosition(0, startPoint);
+            lineRenderer.SetPosition(1, endPoint);
+            lineRenderer.startWidth = startWidth;
+            lineRenderer.endWidth = endWidth;
+            lineRenderer.numCapVertices = 2;
+            lineRenderer.alignment = LineAlignment.View;
+            lineRenderer.material = material;
+            lineRenderer.startColor = startColor;
+            lineRenderer.endColor = endColor;
+        }
+
+        private void LateUpdate()
+        {
+            if (Time.time < releaseTime)
+            {
+                return;
+            }
+
+            if (lineRenderer != null)
+            {
+                lineRenderer.positionCount = 0;
+            }
+
+            transform.SetParent(poolRoot, false);
+            gameObject.SetActive(false);
+        }
     }
 
     private void CreateBulletHole(RaycastHit hit)
     {
-        if (bulletHolePrefab == null)
+        Vector3 safeNormal = hit.normal.sqrMagnitude > 0.0001f ? hit.normal.normalized : Vector3.forward;
+        float randomSize = GetBulletHoleDiameter();
+
+        if (useRoundBulletHoles)
+        {
+            BulletHoleDecal.CreateRound(
+                hit.point,
+                safeNormal,
+                randomSize,
+                bulletHoleSurfaceOffset,
+                hit.collider.transform,
+                bulletHoleLifetime);
+            return;
+        }
+
+        Quaternion hitRotation = Quaternion.LookRotation(safeNormal);
+        Vector3 hitPosition = hit.point + safeNormal * Mathf.Max(0.001f, bulletHoleSurfaceOffset);
+
+        GameObject bulletHole = bulletHolePrefab != null
+            ? Instantiate(bulletHolePrefab, hitPosition, hitRotation)
+            : CreateFallbackBulletHole(hitPosition, hitRotation);
+
+        float rollDegrees = Random.Range(0f, 360f);
+        BulletHoleDecal.AttachToSurface(
+            bulletHole,
+            hit.collider.transform,
+            hit.point,
+            safeNormal,
+            randomSize,
+            bulletHoleSurfaceOffset,
+            rollDegrees);
+
+        EnsureBulletHoleVisible(bulletHole);
+
+        Destroy(bulletHole, bulletHoleLifetime);
+    }
+
+    private float GetBulletHoleDiameter()
+    {
+        float size = bulletHoleSize * Random.Range(0.8f, 1.2f);
+        float minSize = Mathf.Max(0.01f, minRoundBulletHoleSize);
+        float maxSize = Mathf.Max(minSize, maxRoundBulletHoleSize);
+        return useRoundBulletHoles ? Mathf.Clamp(size, minSize, maxSize) : Mathf.Max(0.01f, size);
+    }
+
+    private static GameObject CreateFallbackBulletHole(Vector3 position, Quaternion rotation)
+    {
+        GameObject bulletHole = GameObject.CreatePrimitive(PrimitiveType.Quad);
+        bulletHole.name = "Bullet Hole";
+        bulletHole.transform.SetPositionAndRotation(position, rotation);
+
+        Collider collider = bulletHole.GetComponent<Collider>();
+        if (collider != null)
+        {
+            Destroy(collider);
+        }
+
+        MeshRenderer renderer = bulletHole.GetComponent<MeshRenderer>();
+        if (renderer != null)
+        {
+            renderer.material = GetFallbackBulletHoleMaterial();
+        }
+
+        return bulletHole;
+    }
+
+    private static void EnsureBulletHoleVisible(GameObject bulletHole)
+    {
+        Renderer[] renderers = bulletHole.GetComponentsInChildren<Renderer>();
+        for (int i = 0; i < renderers.Length; i++)
+        {
+            Renderer targetRenderer = renderers[i];
+            targetRenderer.enabled = true;
+            targetRenderer.shadowCastingMode = ShadowCastingMode.Off;
+            targetRenderer.receiveShadows = false;
+
+            Material[] materials = targetRenderer.materials;
+            for (int j = 0; j < materials.Length; j++)
+            {
+                Material material = materials[j];
+                if (material != null && material.HasProperty("_Cull"))
+                {
+                    material.SetFloat("_Cull", 0f);
+                }
+            }
+        }
+    }
+
+    private static Material GetFallbackTracerMaterial()
+    {
+        if (fallbackTracerMaterial != null)
+        {
+            return fallbackTracerMaterial;
+        }
+
+        Shader shader = Shader.Find("Universal Render Pipeline/Particles/Unlit");
+        if (shader == null)
+        {
+            shader = Shader.Find("Sprites/Default");
+        }
+
+        fallbackTracerMaterial = new Material(shader)
+        {
+            hideFlags = HideFlags.HideAndDontSave
+        };
+
+        return fallbackTracerMaterial;
+    }
+
+    private static Material GetFallbackBulletHoleMaterial()
+    {
+        if (fallbackBulletHoleMaterial != null)
+        {
+            return fallbackBulletHoleMaterial;
+        }
+
+        Shader shader = Shader.Find("Universal Render Pipeline/Unlit");
+        if (shader == null)
+        {
+            shader = Shader.Find("Unlit/Color");
+        }
+
+        fallbackBulletHoleMaterial = new Material(shader)
+        {
+            hideFlags = HideFlags.HideAndDontSave,
+            color = Color.black
+        };
+
+        return fallbackBulletHoleMaterial;
+    }
+
+    private static int GetPlayerLayerOrCurrent(int currentLayer)
+    {
+        int playerLayer = LayerMask.NameToLayer("Player");
+        return playerLayer >= 0 ? playerLayer : currentLayer;
+    }
+
+    private static Transform FindChildRecursive(Transform root, string childName)
+    {
+        if (root == null)
+        {
+            return null;
+        }
+
+        if (root.name == childName)
+        {
+            return root;
+        }
+
+        foreach (Transform child in root)
+        {
+            Transform match = FindChildRecursive(child, childName);
+            if (match != null)
+            {
+                return match;
+            }
+        }
+
+        return null;
+    }
+
+    private static void SetLayerRecursive(Transform root, int layer)
+    {
+        if (root == null)
         {
             return;
         }
 
-        Quaternion hitRotation = Quaternion.LookRotation(hit.normal);
-        GameObject bulletHole = Instantiate(
-            bulletHolePrefab,
-            hit.point + hit.normal * 0.001f,
-            hitRotation);
-
-        float randomSize = bulletHoleSize * Random.Range(0.8f, 1.2f);
-        bulletHole.transform.localScale = Vector3.one * randomSize;
-        bulletHole.transform.Rotate(hit.normal, Random.Range(0f, 360f), Space.World);
-        bulletHole.transform.SetParent(hit.collider.transform);
-
-        Destroy(bulletHole, bulletHoleLifetime);
+        root.gameObject.layer = layer;
+        foreach (Transform child in root)
+        {
+            SetLayerRecursive(child, layer);
+        }
     }
 
     private void EnsureAmmoUI()
@@ -318,14 +1131,32 @@ public class Weapon : MonoBehaviour
             return;
         }
 
+        if (activeWeapon == null)
+        {
+            ammoText.text = "WEAPON: NONE\nMODE: SINGLE\nAMMO: 0 / 0\nMAGS: 0";
+            return;
+        }
+
+        string slotLabel = activeSlot == WeaponSlot.Primary ? "1 PRIMARY" : "2 SECONDARY";
         ammoText.text =
+            $"WEAPON: {slotLabel} {activeWeapon.DisplayName}\n" +
             $"MODE: {GetModeLabel()}\n" +
-            $"AMMO: {currentAmmo} / {TotalAmmo}\n" +
+            $"AMMO: {CurrentAmmo} / {activeWeapon.MagazineSize}\n" +
             $"MAGS: {RemainingMagazineCount}";
     }
 
     private string GetModeLabel()
     {
-        return currentShootingMode == ShootingMode.Auto ? "AUTO" : "SINGLE";
+        if (activeWeapon != null && activeWeapon.IsReloading)
+        {
+            return "RELOADING";
+        }
+
+        if (activeWeapon == null || !activeWeapon.AllowsAuto)
+        {
+            return "SINGLE";
+        }
+
+        return activeWeapon.ShootingMode == ShootingMode.Auto ? "AUTO" : "SINGLE";
     }
 }

@@ -1,26 +1,21 @@
-using UnityEditor;
-using UnityEngine;
+using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
-using System.Collections.Generic;
+using UnityEditor;
+using UnityEngine;
 
-/// <summary>
-/// AssetBundle 构建工具
-/// 用于在编辑器中构建、重命名和生成资源清单
-/// </summary>
-public class AssetBundleBuilder : EditorWindow
+public static class AssetBundleBuilder
 {
-    private const string ManifestVersion = "1.1.2";
-    private const int ManifestBuildNumber = 4;
-    private const string TestBundlePlaceholder = "test_bundle.unity3d";
+    private const string ManifestVersion = "1.1.4";
+    private const int ManifestBuildNumber = 6;
+    private const bool ManifestForceUpdate = false;
+    private const string ManifestUpdateDescription = "Add hot-update submachine gun pickup";
 
-    /// <summary>
-    /// 构建所有 AssetBundles
-    /// 菜单路径: Tools/Build AssetBundles
-    /// </summary>
     [MenuItem("Tools/Build AssetBundles")]
-    static void BuildAllAssetBundles()
+    [MenuItem("FPS Game/Build Hot Update Bundles")]
+    public static void BuildAllAssetBundles()
     {
         string outputPath = Path.Combine(Application.dataPath, "../Server/public/updates/bundles");
 
@@ -31,44 +26,38 @@ public class AssetBundleBuilder : EditorWindow
 
         CleanOutputDirectory(outputPath);
 
-        // 构建 AssetBundles
         BuildPipeline.BuildAssetBundles(
             outputPath,
             BuildAssetBundleOptions.None,
-            BuildTarget.StandaloneWindows64
-        );
+            BuildTarget.StandaloneWindows64);
 
-        // 重命名文件（添加 .unity3d 扩展名）
         RenameAssetBundles(outputPath);
-
-        // 生成资源清单文件
         GenerateManifest(outputPath);
 
         Debug.Log($"AssetBundles built to: {outputPath}");
     }
 
-    static void CleanOutputDirectory(string outputPath)
+    private static void CleanOutputDirectory(string outputPath)
     {
-        DirectoryInfo dir = new DirectoryInfo(outputPath);
-        foreach (FileInfo file in dir.GetFiles())
+        DirectoryInfo directory = new DirectoryInfo(outputPath);
+        foreach (FileInfo file in directory.GetFiles())
         {
             file.Delete();
         }
     }
 
-    /// <summary>
-    /// 重命名 AssetBundle 文件，添加 .unity3d 扩展名
-    /// </summary>
-    static void RenameAssetBundles(string bundlePath)
+    private static void RenameAssetBundles(string bundlePath)
     {
-        DirectoryInfo dir = new DirectoryInfo(bundlePath);
-        FileInfo[] files = dir.GetFiles();
+        DirectoryInfo directory = new DirectoryInfo(bundlePath);
 
-        foreach (FileInfo file in files)
+        foreach (FileInfo file in directory.GetFiles())
         {
-            // 跳过已有扩展名的文件
-            if (file.Extension != "" || file.Name == "bundles" || file.Name.EndsWith(".manifest"))
+            if (!string.IsNullOrEmpty(file.Extension) ||
+                file.Name == "bundles" ||
+                file.Name.EndsWith(".manifest"))
+            {
                 continue;
+            }
 
             string newName = file.FullName + ".unity3d";
             if (File.Exists(newName))
@@ -81,35 +70,17 @@ public class AssetBundleBuilder : EditorWindow
         }
     }
 
-    /// <summary>
-    /// 生成资源清单 JSON 文件
-    /// 包含版本号、构建号和所有 bundle 的信息（名称、哈希、大小）
-    /// </summary>
-    static void GenerateManifest(string bundlePath)
+    private static void GenerateManifest(string bundlePath)
     {
         StringBuilder manifestJson = new StringBuilder();
         manifestJson.AppendLine("{");
         manifestJson.AppendLine($"  \"version\": \"{ManifestVersion}\",");
         manifestJson.AppendLine($"  \"buildNumber\": {ManifestBuildNumber},");
+        manifestJson.AppendLine($"  \"forceUpdate\": {ManifestForceUpdate.ToString().ToLowerInvariant()},");
+        manifestJson.AppendLine($"  \"updateDescription\": \"{ManifestUpdateDescription}\",");
         manifestJson.AppendLine("  \"bundles\": [");
 
-        DirectoryInfo dir = new DirectoryInfo(bundlePath);
-        List<FileInfo> files = new List<FileInfo>();
-
-        FileInfo mainManifestBundle = new FileInfo(Path.Combine(bundlePath, "bundles"));
-        if (mainManifestBundle.Exists)
-        {
-            files.Add(mainManifestBundle);
-        }
-
-        foreach (FileInfo bundleFile in dir.GetFiles("*.unity3d"))
-        {
-            if (bundleFile.Name == TestBundlePlaceholder)
-                continue;
-
-            files.Add(bundleFile);
-        }
-
+        List<FileInfo> files = GetManifestFiles(bundlePath);
         for (int i = 0; i < files.Count; i++)
         {
             FileInfo file = files[i];
@@ -120,11 +91,7 @@ public class AssetBundleBuilder : EditorWindow
             manifestJson.AppendLine($"      \"hash\": \"{hash}\",");
             manifestJson.AppendLine($"      \"size\": {file.Length}");
             manifestJson.Append("    }");
-
-            if (i < files.Count - 1)
-                manifestJson.AppendLine(",");
-            else
-                manifestJson.AppendLine();
+            manifestJson.AppendLine(i < files.Count - 1 ? "," : string.Empty);
         }
 
         manifestJson.AppendLine("  ]");
@@ -136,18 +103,32 @@ public class AssetBundleBuilder : EditorWindow
         Debug.Log($"Manifest generated: {manifestPath}");
     }
 
-    /// <summary>
-    /// 计算文件的 MD5 哈希值
-    /// </summary>
-    static string CalculateMD5(string filePath)
+    private static List<FileInfo> GetManifestFiles(string bundlePath)
     {
-        using (var md5 = MD5.Create())
+        DirectoryInfo directory = new DirectoryInfo(bundlePath);
+        List<FileInfo> files = new List<FileInfo>();
+
+        FileInfo mainManifestBundle = new FileInfo(Path.Combine(bundlePath, "bundles"));
+        if (mainManifestBundle.Exists)
         {
-            using (var stream = File.OpenRead(filePath))
-            {
-                byte[] hash = md5.ComputeHash(stream);
-                return System.BitConverter.ToString(hash).Replace("-", "").ToLower();
-            }
+            files.Add(mainManifestBundle);
+        }
+
+        foreach (FileInfo bundleFile in directory.GetFiles("*.unity3d"))
+        {
+            files.Add(bundleFile);
+        }
+
+        return files;
+    }
+
+    private static string CalculateMD5(string filePath)
+    {
+        using (MD5 md5 = MD5.Create())
+        using (FileStream stream = File.OpenRead(filePath))
+        {
+            byte[] hash = md5.ComputeHash(stream);
+            return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
         }
     }
 }
