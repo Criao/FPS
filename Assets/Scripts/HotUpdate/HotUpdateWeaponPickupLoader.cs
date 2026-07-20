@@ -167,15 +167,18 @@ namespace FPSGame.HotUpdate
             }
 
             Transform reference = GetPlayerReference();
-            float distanceToPlayer = Vector3.Distance(reference.position, transform.position);
-            bool isInRange = distanceToPlayer <= pickupDistance;
+            float pickupDistanceSqr = pickupDistance * pickupDistance;
+            bool isInRange = (reference.position - transform.position).sqrMagnitude <= pickupDistanceSqr;
 
             if (promptObject != null && promptObject.activeSelf != isInRange)
             {
                 promptObject.SetActive(isInRange);
             }
 
-            UpdatePromptBillboard();
+            if (isInRange)
+            {
+                UpdatePromptBillboard();
+            }
 
             if (isInRange && Input.GetKeyDown(pickupKey))
             {

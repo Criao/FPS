@@ -21,7 +21,7 @@ public class Weapon : MonoBehaviour
 {
     private const string FirstPersonWeaponModelName = "FirstPersonGunModel";
     private const string MuzzleName = "Muzzle";
-    private const int InitialShotTracerPoolSize = 16;
+    private const int InitialShotTracerPoolSize = 8;
     private const int MaxShotTracerPoolSize = 48;
     private const int DefaultPrimaryMagazineSize = 25;
     private const int DefaultPrimaryTotalMagazines = 3;
@@ -146,18 +146,9 @@ public class Weapon : MonoBehaviour
         EnsureWeaponAudioSources();
         InitializeWeaponSlots();
 
-        if (useRoundBulletHoles)
-        {
-            BulletHoleDecal.Prewarm();
-        }
-
-        if (showShotTracer)
-        {
-            PrewarmShotTracers();
-        }
-
         EnsureAmmoUI();
         UpdateAmmoUI();
+        StartCoroutine(PrewarmRuntimePools());
     }
 
     private void ApplyFixedWeaponSettings()
@@ -542,7 +533,10 @@ public class Weapon : MonoBehaviour
 
     private void PlayShotSound()
     {
-        EnsureWeaponAudioSources();
+        if (shotAudioSource == null || autoFireAudioSource == null)
+        {
+            EnsureWeaponAudioSources();
+        }
 
         bool useAutoSound = activeWeapon != null &&
                             activeWeapon.AllowsAuto &&
@@ -566,7 +560,10 @@ public class Weapon : MonoBehaviour
 
     private void PlayReloadSound(WeaponRuntimeState weaponState)
     {
-        EnsureWeaponAudioSources();
+        if (reloadAudioSource == null)
+        {
+            EnsureWeaponAudioSources();
+        }
 
         if (reloadAudioSource == null || reloadSound == null)
         {
@@ -729,13 +726,12 @@ public class Weapon : MonoBehaviour
             ? playerCamera.transform
             : bulletSpawnPoint != null ? bulletSpawnPoint : transform;
 
-        Vector3 origin = playerCamera != null
-            ? playerCamera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f)).origin
-            : aimTransform.position;
+        Ray cameraRay = playerCamera != null
+            ? playerCamera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f))
+            : new Ray(aimTransform.position, aimTransform.forward);
 
-        Vector3 direction = playerCamera != null
-            ? playerCamera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f)).direction
-            : aimTransform.forward;
+        Vector3 origin = cameraRay.origin;
+        Vector3 direction = cameraRay.direction;
 
         if (spreadIntensity > 0f)
         {
@@ -791,6 +787,41 @@ public class Weapon : MonoBehaviour
         while (shotTracerPool.Count < InitialShotTracerPoolSize)
         {
             CreatePooledShotTracer();
+        }
+    }
+
+    private IEnumerator PrewarmRuntimePools()
+    {
+        yield return null;
+
+        if (useRoundBulletHoles)
+        {
+            yield return BulletHoleDecal.PrewarmAsync();
+        }
+
+        if (showShotTracer)
+        {
+            yield return PrewarmShotTracersAsync();
+        }
+    }
+
+    private static IEnumerator PrewarmShotTracersAsync(int perFrame = 4)
+    {
+        EnsureShotTracerPoolRoot();
+
+        int safePerFrame = Mathf.Max(1, perFrame);
+        int createdThisFrame = 0;
+
+        while (shotTracerPool.Count < InitialShotTracerPoolSize)
+        {
+            CreatePooledShotTracer();
+            createdThisFrame++;
+
+            if (createdThisFrame >= safePerFrame)
+            {
+                createdThisFrame = 0;
+                yield return null;
+            }
         }
     }
 

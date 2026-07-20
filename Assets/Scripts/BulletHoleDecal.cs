@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -5,7 +6,7 @@ using UnityEngine.Rendering;
 public static class BulletHoleDecal
 {
     private const int SegmentCount = 32;
-    private const int InitialPoolSize = 32;
+    private const int InitialPoolSize = 16;
     private const int MaxPoolSize = 96;
 
     private static Mesh roundHoleMesh;
@@ -22,6 +23,27 @@ public static class BulletHoleDecal
         while (pooledRoundHoles.Count < targetCount)
         {
             CreatePooledRoundHole();
+        }
+    }
+
+    public static IEnumerator PrewarmAsync(int count = InitialPoolSize, int perFrame = 4)
+    {
+        EnsurePoolRoot();
+
+        int targetCount = Mathf.Clamp(count, 0, MaxPoolSize);
+        int safePerFrame = Mathf.Max(1, perFrame);
+        int createdThisFrame = 0;
+
+        while (pooledRoundHoles.Count < targetCount)
+        {
+            CreatePooledRoundHole();
+            createdThisFrame++;
+
+            if (createdThisFrame >= safePerFrame)
+            {
+                createdThisFrame = 0;
+                yield return null;
+            }
         }
     }
 

@@ -1,26 +1,30 @@
 using UnityEngine;
 
-/// <summary>
-/// 鼠标视角控制器
-/// 负责处理第一人称视角的鼠标旋转
-/// </summary>
+[DefaultExecutionOrder(-100)]
 public class MouseMovement : MonoBehaviour
 {
-    [SerializeField] private Transform cameraTransform;         // 只负责上下看的相机
-    [SerializeField] private float mouseSensitivity = 100f;   // 鼠标灵敏度
-    [SerializeField] private float minVerticalAngle = -90f;   // 最小垂直角度（向下看）
-    [SerializeField] private float maxVerticalAngle = 90f;    // 最大垂直角度（向上看）
-    private float xRotation = 0f;  // 垂直旋转角度（俯仰）
-    private float yRotation = 0f;  // 水平旋转角度（偏航）
+    private const float SensitivityScale = 0.02f;
 
-    /// <summary>
-    /// 初始化：锁定并隐藏鼠标光标
-    /// </summary>
-    private void Start()
+    [Header("References")]
+    [SerializeField] private Transform cameraTransform;
+
+    [Header("Look Settings")]
+    [Min(0f)]
+    [SerializeField] private float mouseSensitivity = 100f;
+    [Range(0f, 0.1f)]
+    [SerializeField] private float mouseSmoothTime = 0.015f;
+    [SerializeField] private float minVerticalAngle = -90f;
+    [SerializeField] private float maxVerticalAngle = 90f;
+    [Min(0f)]
+    [SerializeField] private float maxLookDegreesPerFrame = 35f;
+
+    private Vector2 smoothedMouseDelta;
+    private Vector2 mouseDeltaVelocity;
+    private float xRotation;
+    private float yRotation;
+
+    private void Awake()
     {
-        Cursor.lockState = CursorLockMode.Locked;
-        Cursor.visible = false;
-
         if (cameraTransform == null)
         {
             Camera childCamera = GetComponentInChildren<Camera>();
@@ -30,33 +34,77 @@ public class MouseMovement : MonoBehaviour
             }
         }
 
+        xRotation = cameraTransform != null ? NormalizeAngle(cameraTransform.localEulerAngles.x) : 0f;
         yRotation = transform.eulerAngles.y;
     }
 
-    /// <summary>
-    /// 每帧更新：根据鼠标移动旋转视角
-    /// </summary>
+    private void Start()
+    {
+        LockCursor();
+    }
+
     private void Update()
     {
-        // 获取鼠标移动量并应用灵敏度
-        float mouseX = Input.GetAxis("Mouse X") * mouseSensitivity * Time.deltaTime;
-        float mouseY = Input.GetAxis("Mouse Y") * mouseSensitivity * Time.deltaTime;
+        if (Cursor.lockState != CursorLockMode.Locked)
+        {
+            if (Input.GetMouseButtonDown(0))
+            {
+                LockCursor();
+            }
 
-        // 更新垂直旋转（俯仰）
-        // 注意：减去mouseY是因为鼠标向上移动时Y值为正，但我们希望视角向上看
-        xRotation -= mouseY;
-        // 限制垂直旋转角度，防止视角翻转
-        xRotation = Mathf.Clamp(xRotation, minVerticalAngle, maxVerticalAngle);
+            return;
+        }
 
-        // 更新水平旋转（偏航）
-        yRotation += mouseX;
+        Vector2 mouseDelta = GetMouseDelta();
 
-        // 玩家物体只水平旋转，避免前进方向带上下分量。
+        yRotation += mouseDelta.x;
+        xRotation = Mathf.Clamp(xRotation - mouseDelta.y, minVerticalAngle, maxVerticalAngle);
+
         transform.rotation = Quaternion.Euler(0f, yRotation, 0f);
 
         if (cameraTransform != null)
         {
             cameraTransform.localRotation = Quaternion.Euler(xRotation, 0f, 0f);
         }
+    }
+
+    private Vector2 GetMouseDelta()
+    {
+        Vector2 rawDelta = new Vector2(Input.GetAxisRaw("Mouse X"), Input.GetAxisRaw("Mouse Y"));
+        Vector2 targetDelta = rawDelta * mouseSensitivity * SensitivityScale;
+
+        if (maxLookDegreesPerFrame > 0f)
+        {
+            targetDelta = Vector2.ClampMagnitude(targetDelta, maxLookDegreesPerFrame);
+        }
+
+        if (mouseSmoothTime <= 0f)
+        {
+            smoothedMouseDelta = targetDelta;
+            mouseDeltaVelocity = Vector2.zero;
+            return targetDelta;
+        }
+
+        smoothedMouseDelta = Vector2.SmoothDamp(
+            smoothedMouseDelta,
+            targetDelta,
+            ref mouseDeltaVelocity,
+            mouseSmoothTime,
+            Mathf.Infinity,
+            Time.unscaledDeltaTime
+        );
+
+        return smoothedMouseDelta;
+    }
+
+    private void LockCursor()
+    {
+        Cursor.lockState = CursorLockMode.Locked;
+        Cursor.visible = false;
+    }
+
+    private static float NormalizeAngle(float angle)
+    {
+        return angle > 180f ? angle - 360f : angle;
     }
 }

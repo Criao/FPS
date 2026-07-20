@@ -24,6 +24,7 @@ namespace FPSGame.Core
         public GameState CurrentState { get; private set; }
 
         private Coroutine startupCoroutine;
+        private Coroutine sceneLoadCoroutine;
         private HotUpdateUI hotUpdateUI;
 
         private void Awake()
@@ -229,7 +230,31 @@ namespace FPSGame.Core
 
             CurrentState = GameState.InGame;
             Utils.Logger.Log("Entering game scene");
-            SceneManager.LoadScene("FPS");
+
+            if (sceneLoadCoroutine != null)
+            {
+                StopCoroutine(sceneLoadCoroutine);
+            }
+
+            sceneLoadCoroutine = StartCoroutine(LoadSceneAsync("FPS"));
+        }
+
+        private IEnumerator LoadSceneAsync(string sceneName)
+        {
+            AsyncOperation operation = SceneManager.LoadSceneAsync(sceneName);
+            if (operation == null)
+            {
+                SceneManager.LoadScene(sceneName);
+                sceneLoadCoroutine = null;
+                yield break;
+            }
+
+            while (!operation.isDone)
+            {
+                yield return null;
+            }
+
+            sceneLoadCoroutine = null;
         }
 
         private VersionInfo CreateLocalVersionInfo()

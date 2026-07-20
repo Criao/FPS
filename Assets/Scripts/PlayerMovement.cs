@@ -4,23 +4,55 @@ using UnityEngine;
 public class PlayerMovement : MonoBehaviour
 {
     [Header("Movement Settings")]
+    [Min(0f)]
     [SerializeField] private float moveSpeed = 5f;
+    [Min(0f)]
     [SerializeField] private float sprintSpeed = 8f;
+    [Min(0f)]
     [SerializeField] private float jumpForce = 5f;
     [SerializeField] private float gravity = -9.81f;
 
+    [Header("Movement Feel")]
+    [Min(0f)]
+    [SerializeField] private float groundAcceleration = 35f;
+    [Min(0f)]
+    [SerializeField] private float groundDeceleration = 45f;
+    [Min(0f)]
+    [SerializeField] private float airAcceleration = 14f;
+    [Min(0f)]
+    [SerializeField] private float airDeceleration = 2f;
+
+    [Header("Jump Forgiveness")]
+    [Min(0f)]
+    [SerializeField] private float coyoteTime = 0.12f;
+    [Min(0f)]
+    [SerializeField] private float jumpBufferTime = 0.12f;
+    [SerializeField] private float groundedStickForce = -2f;
+    [SerializeField] private float maxFallSpeed = -35f;
+
     [Header("Ground Detection")]
     [SerializeField] private Transform groundCheck;
+    [Min(0.01f)]
     [SerializeField] private float groundDistance = 0.4f;
     [SerializeField] private LayerMask groundMask;
+    [Min(0.01f)]
+    [SerializeField] private float groundNormalProbeDistance = 0.35f;
 
     private CharacterController controller;
     private Vector3 velocity;
+    private Vector3 horizontalVelocity;
+    private Vector2 moveInput;
+    private Vector3 groundNormal = Vector3.up;
     private bool isGrounded;
     private bool isMoving;
-    private Vector3 lastPosition;
+    private bool isSprinting;
+    private float lastGroundedTime = float.NegativeInfinity;
+    private float lastJumpPressedTime = float.NegativeInfinity;
 
     public bool IsMoving => isMoving;
+    public bool IsGrounded => isGrounded;
+    public bool IsSprinting => isSprinting;
+    public float CurrentHorizontalSpeed => horizontalVelocity.magnitude;
 
     private void Awake()
     {
@@ -40,11 +72,6 @@ public class PlayerMovement : MonoBehaviour
         }
     }
 
-    private void Start()
-    {
-        lastPosition = transform.position;
-    }
-
     private void Update()
     {
         if (controller == null)
@@ -52,10 +79,13 @@ public class PlayerMovement : MonoBehaviour
             return;
         }
 
+        ReadInput();
         CheckGround();
+        QueueJump();
         HandleMovement();
         HandleJump();
         ApplyGravity();
+        MoveCharacter();
         CheckMovementState();
     }
 
@@ -78,51 +108,135 @@ public class PlayerMovement : MonoBehaviour
     {
         if (groundCheck == null)
         {
+            groundNormal = Vector3.up;
             isGrounded = false;
             return;
         }
 
-        isGrounded = Physics.CheckSphere(
+        bool sphereGrounded = Physics.CheckSphere(
             groundCheck.position,
             groundDistance,
             groundMask,
             QueryTriggerInteraction.Ignore
         );
 
+        isGrounded = controller.isGrounded || sphereGrounded;
+        groundNormal = FindGroundNormal();
+
+        if (isGrounded)
+        {
+            lastGroundedTime = Time.time;
+        }
+
         if (isGrounded && velocity.y < 0f)
         {
-            velocity.y = -2f;
+            velocity.y = groundedStickForce;
         }
+    }
+
+    private Vector3 FindGroundNormal()
+    {
+        Vector3 origin = transform.TransformPoint(controller.center);
+        float rayDistance = controller.height * 0.5f + groundDistance + groundNormalProbeDistance;
+
+        if (Physics.Raycast(origin, Vector3.down, out RaycastHit hit, rayDistance, groundMask, QueryTriggerInteraction.Ignore))
+        {
+            return hit.normal;
+        }
+
+        return Vector3.up;
+    }
+
+    private void ReadInput()
+    {
+        float horizontal = Input.GetAxisRaw("Horizontal");
+        float vertical = Input.GetAxisRaw("Vertical");
+
+        moveInput = Vector2.ClampMagnitude(new Vector2(horizontal, vertical), 1f);
+        isSprinting = Input.GetKey(KeyCode.LeftShift);
     }
 
     private void HandleMovement()
     {
-        float horizontal = Input.GetAxis("Horizontal");
-        float vertical = Input.GetAxis("Vertical");
+        Vector3 desiredDirection = transform.right * moveInput.x + transform.forward * moveInput.y;
+        if (desiredDirection.sqrMagnitude > 1f)
+        {
+            desiredDirection.Normalize();
+        }
 
-        Vector3 move = transform.right * horizontal + transform.forward * vertical;
-        float currentSpeed = Input.GetKey(KeyCode.LeftShift) ? sprintSpeed : moveSpeed;
+        if (isGrounded)
+        {
+            desiredDirection = Vector3.ProjectOnPlane(desiredDirection, groundNormal).normalized;
+        }
 
-        controller.Move(move * currentSpeed * Time.deltaTime);
+        float currentSpeed = isSprinting ? sprintSpeed : moveSpeed;
+        Vector3 desiredVelocity = desiredDirection * currentSpeed;
+        bool hasMoveInput = moveInput.sqrMagnitude > 0.01f;
+        float acceleration = GetAcceleration(hasMoveInput);
+
+        horizontalVelocity = Vector3.MoveTowards(
+            horizontalVelocity,
+            hasMoveInput ? desiredVelocity : Vector3.zero,
+            acceleration * Time.deltaTime
+        );
+    }
+
+    private float GetAcceleration(bool hasMoveInput)
+    {
+        if (isGrounded)
+        {
+            return hasMoveInput ? groundAcceleration : groundDeceleration;
+        }
+
+        return hasMoveInput ? airAcceleration : airDeceleration;
+    }
+
+    private void QueueJump()
+    {
+        if (Input.GetButtonDown("Jump"))
+        {
+            lastJumpPressedTime = Time.time;
+        }
     }
 
     private void HandleJump()
     {
-        if (Input.GetButtonDown("Jump") && isGrounded)
+        bool hasBufferedJump = Time.time - lastJumpPressedTime <= jumpBufferTime;
+        bool canUseCoyoteTime = Time.time - lastGroundedTime <= coyoteTime;
+
+        if (hasBufferedJump && canUseCoyoteTime)
         {
             velocity.y = Mathf.Sqrt(jumpForce * -2f * gravity);
+            lastJumpPressedTime = float.NegativeInfinity;
+            lastGroundedTime = float.NegativeInfinity;
+            isGrounded = false;
         }
     }
 
     private void ApplyGravity()
     {
         velocity.y += gravity * Time.deltaTime;
-        controller.Move(velocity * Time.deltaTime);
+
+        if (maxFallSpeed < 0f)
+        {
+            velocity.y = Mathf.Max(velocity.y, maxFallSpeed);
+        }
+    }
+
+    private void MoveCharacter()
+    {
+        Vector3 motion = horizontalVelocity + Vector3.up * velocity.y;
+        CollisionFlags flags = controller.Move(motion * Time.deltaTime);
+
+        if ((flags & CollisionFlags.Above) != 0 && velocity.y > 0f)
+        {
+            velocity.y = 0f;
+        }
     }
 
     private void CheckMovementState()
     {
-        isMoving = isGrounded && lastPosition != transform.position;
-        lastPosition = transform.position;
+        Vector3 flatVelocity = new Vector3(horizontalVelocity.x, 0f, horizontalVelocity.z);
+        isMoving = isGrounded && flatVelocity.sqrMagnitude > 0.01f;
     }
 }
